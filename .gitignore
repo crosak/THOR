@@ -29,4 +29,5 @@ compile_commands.json
 include/git-rev.h
 # jupyter notebooks temp checkpoints directories
 **/.ipynb_checkpoints/
-
+# macOS .DS_Store files
+.DS_Store
