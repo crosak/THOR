@@ -17,11 +17,17 @@ import os
 import h5py
 import time
 import subprocess as spr
-import pyshtools as chairs
 import pdb
 
 import pathlib
 import psutil
+
+try:
+    import pyshtools as chairs
+    has_pyshtools = True
+except ImportError as e:
+    print(e)
+    has_pyshtools = False
 
 try:
     import pycuda.driver as cuda
@@ -36,7 +42,9 @@ except ImportError as e:
 plt.rcParams['image.cmap'] = 'magma'
 # plt.rcParams['font.family'] = 'sans-serif'
 # plt.rcParams['font.sans-serif'] = 'Helvetica-Normal'
-
+np.int = int
+np.str = str
+np.float = float
 
 
 class input_new:
@@ -705,7 +713,11 @@ def create_rg_map(resultsf, simID, idx1, idx2, rotation=False, theta_z=0, theta_
                        np.sin(grid.lat)]).T
 
     # set horizontal angular resolution of latlon grid roughly same as ico grid
-    ang_res = (4.0 / 2**(input.glevel - 4)) * np.pi / 180
+    if input.glevel <= 4:
+        ang_res = (4.0 / 2**(input.glevel - 4)) * np.pi / 180
+    # Workaround for now, we will eventually fix the pycuda implementation
+    elif input.glevel>4:
+        ang_res = np.deg2rad(2)
 
     # 1D lat and lon arrays
     lat_range = np.arange(-np.pi / 2 + ang_res / 2, np.pi / 2, ang_res)
@@ -1090,98 +1102,98 @@ def regrid(resultsf, simID, ntsi, nts, pgrid_ref='auto', overwrite=False, comp=4
                                                      compression='gzip', compression_opts=comp)
                 openh5.close()
 
+if has_pyshtools:
+    def KE_spect(input, grid, output, sigmaref, coord='icoh', lmax_adjust=0):
+        tsp = output.nts - output.ntsi + 1
+        lmax_grid = np.int(np.floor(np.sqrt(grid.point_num)) / 2 - 1)
 
-def KE_spect(input, grid, output, sigmaref, coord='icoh', lmax_adjust=0):
-    tsp = output.nts - output.ntsi + 1
-    lmax_grid = np.int(np.floor(np.sqrt(grid.point_num)) / 2 - 1)
+        if coord == 'icoh':
+            W = 0.5 * (output.Wh[:, 1:, :] + output.Wh[:, :-1, :])
+            Wx = W * np.cos(grid.lat[:, None, None]) * np.cos(grid.lon[:, None, None])
+            Wy = W * np.cos(grid.lat[:, None, None]) * np.sin(grid.lon[:, None, None])
+            Wz = W * np.sin(grid.lat[:, None, None])
 
-    if coord == 'icoh':
-        W = 0.5 * (output.Wh[:, 1:, :] + output.Wh[:, :-1, :])
-        Wx = W * np.cos(grid.lat[:, None, None]) * np.cos(grid.lon[:, None, None])
-        Wy = W * np.cos(grid.lat[:, None, None]) * np.sin(grid.lon[:, None, None])
-        Wz = W * np.sin(grid.lat[:, None, None])
+            Vx = (output.Mh[0] + Wx)/output.Rho
+            Vy = (output.Mh[1] + Wy)/output.Rho
+            Vz = (output.Mh[2] + Wz)/output.Rho
 
-        Vx = (output.Mh[0] + Wx)/output.Rho
-        Vy = (output.Mh[1] + Wy)/output.Rho
-        Vz = (output.Mh[2] + Wz)/output.Rho
+            KE = 0.5 * (Vx**2 + Vy**2 + Vz**2) * output.Rho
+            lmax = np.int(lmax_grid + lmax_adjust)  # sets lmax based on grid size
 
-        KE = 0.5 * (Vx**2 + Vy**2 + Vz**2) * output.Rho
-        lmax = np.int(lmax_grid + lmax_adjust)  # sets lmax based on grid size
+            x_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
+            y_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
+            z_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
+            KE_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
+            KE_power = np.zeros((lmax + 1, grid.nv, tsp))
+            waven = np.arange(lmax + 1)  # total spherical wavenumber
 
-        x_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
-        y_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
-        z_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
-        KE_coeffs = np.zeros((2, lmax + 1, lmax + 1, grid.nv, tsp), dtype=complex)
-        KE_power = np.zeros((lmax + 1, grid.nv, tsp))
-        waven = np.arange(lmax + 1)  # total spherical wavenumber
+            cmap = cm.get_cmap('cividis')
+            fig, ax = plt.subplots(1, 1)
 
-        cmap = cm.get_cmap('cividis')
-        fig, ax = plt.subplots(1, 1)
-
-        if tsp == 1:
-            for lev in np.arange(grid.nv):
-                KE_coeffs[:, :, :, lev, 0], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, 0], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
-                KE_power[:, lev, 0] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,0], unit='per_lm')
-                ax.plot(waven, KE_power[:, lev, 0], 'k-', c=cmap(lev / grid.nv), lw=1)
-        else:
-            for t in np.arange(tsp):
+            if tsp == 1:
                 for lev in np.arange(grid.nv):
-                    KE_coeffs[:, :, :, lev, t], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, t], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
-                    KE_power[:, lev, t] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,t], unit='per_lm')
-                    # ax.plot(waven, KE_power[:, lev, t], 'k-', c=cmap(lev / grid.nv), lw=1)
+                    KE_coeffs[:, :, :, lev, 0], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, 0], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
+                    KE_power[:, lev, 0] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,0], unit='per_lm')
+                    ax.plot(waven, KE_power[:, lev, 0], 'k-', c=cmap(lev / grid.nv), lw=1)
+            else:
+                for t in np.arange(tsp):
+                    for lev in np.arange(grid.nv):
+                        KE_coeffs[:, :, :, lev, t], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, t], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
+                        KE_power[:, lev, t] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,t], unit='per_lm')
+                        # ax.plot(waven, KE_power[:, lev, t], 'k-', c=cmap(lev / grid.nv), lw=1)
 
-            KE_power_mean = np.mean(KE_power,axis=2)
-            for lev in np.arange(grid.nv):
-                ax.plot(waven, KE_power_mean[:, lev], 'k-', c=cmap(lev/grid.nv), lw=1)
+                KE_power_mean = np.mean(KE_power,axis=2)
+                for lev in np.arange(grid.nv):
+                    ax.plot(waven, KE_power_mean[:, lev], 'k-', c=cmap(lev/grid.nv), lw=1)
 
-    else:
-        raise IOError("Invalid coord option! Valid options are 'icoh'")
+        else:
+            raise IOError("Invalid coord option! Valid options are 'icoh'")
 
-    # ax.plot(waven,np.mean(KE_power[:,:,t],axis=1),'k-',lw=2)
-    ax.set_yscale('log')
-    ax.set_xscale('log')
-    ax.vlines(lmax_grid, ax.get_ylim()[0], ax.get_ylim()[1], zorder=1000, linestyle='--')
-    ax.set(ylabel='KE (m$^2$ s$^{-2}$)', xlabel='Spherical wavenumber $n$')
+        # ax.plot(waven,np.mean(KE_power[:,:,t],axis=1),'k-',lw=2)
+        ax.set_yscale('log')
+        ax.set_xscale('log')
+        ax.vlines(lmax_grid, ax.get_ylim()[0], ax.get_ylim()[1], zorder=1000, linestyle='--')
+        ax.set(ylabel='KE (m$^2$ s$^{-2}$)', xlabel='Spherical wavenumber $n$')
 
-    if not os.path.exists(input.resultsf + '/figures'):
-        os.mkdir(input.resultsf + '/figures')
-    plt.tight_layout()
-    plt.savefig(input.resultsf + '/figures/KEspectrum_%i_%i_%s.pdf' % (output.ntsi, output.nts, coord))
-    plt.close()
+        if not os.path.exists(input.resultsf + '/figures'):
+            os.mkdir(input.resultsf + '/figures')
+        plt.tight_layout()
+        plt.savefig(input.resultsf + '/figures/KEspectrum_%i_%i_%s.pdf' % (output.ntsi, output.nts, coord))
+        plt.close()
 
-    lev = 0
-    norm = colors.Normalize(vmin=np.min(KE[:, lev, 0]), vmax=np.max(KE[:, lev, 0]))
+        lev = 0
+        norm = colors.Normalize(vmin=np.min(KE[:, lev, 0]), vmax=np.max(KE[:, lev, 0]))
 
-    fig = plt.figure()
-    fig.subplots_adjust(left=0.1, right=0.97)
-    plt.subplot(2, 1, 1)
-    # if coord == 'llp':  #not complete
-    #     plt.imshow(KE[:, :, 0, 0], origin='lower', extent=(0, 360, -90, 90), norm=norm, aspect='auto')
-    if coord == 'icoh':
-        cont = plt.tricontourf(grid.lon * 180 / np.pi, grid.lat * 180 / np.pi, KE[:, lev, 0], levels=30)
-        for cc in cont.collections:
-            cc.set_edgecolor("face")  # fixes a stupid bug in matplotlib 2.0
-    plt.xlabel('Longitude ($^{\circ}$)')
-    plt.ylabel('Latitude ($^{\circ}$)')
-    plt.title("Model output, lowest level")
-    clb = plt.colorbar()
-    clb.set_label('Kinetic energy (m$^2$ s$^{-2}$)')
+        fig = plt.figure()
+        fig.subplots_adjust(left=0.1, right=0.97)
+        plt.subplot(2, 1, 1)
+        # if coord == 'llp':  #not complete
+        #     plt.imshow(KE[:, :, 0, 0], origin='lower', extent=(0, 360, -90, 90), norm=norm, aspect='auto')
+        if coord == 'icoh':
+            cont = plt.tricontourf(grid.lon * 180 / np.pi, grid.lat * 180 / np.pi, KE[:, lev, 0], levels=30)
+            for cc in cont.collections:
+                cc.set_edgecolor("face")  # fixes a stupid bug in matplotlib 2.0
+        plt.xlabel('Longitude ($^{\circ}$)')
+        plt.ylabel('Latitude ($^{\circ}$)')
+        plt.title("Model output, lowest level")
+        clb = plt.colorbar()
+        clb.set_label('Kinetic energy (m$^2$ s$^{-2}$)')
 
-    KEcomp = chairs.expand.MakeGridDH(KE_coeffs[:, :, :, lev, 0], sampling=2)
-    lat = np.linspace(-90, 90, np.shape(KEcomp)[0])
-    lon = np.linspace(0, 360, np.shape(KEcomp)[1])
+        KEcomp = chairs.expand.MakeGridDH(KE_coeffs[:, :, :, lev, 0], sampling=2)
+        lat = np.linspace(-90, 90, np.shape(KEcomp)[0])
+        lon = np.linspace(0, 360, np.shape(KEcomp)[1])
 
-    plt.subplot(2, 1, 2)
-    plt.imshow(np.real(KEcomp), origin='upper', extent=(0, 360, -90, 90), norm=norm, aspect='auto')
-    plt.xlabel('Latitude ($^{\circ}$)')
-    plt.ylabel('Longitude ($^{\circ}$)')
-    plt.title("Spherical harmonics reconstruction, lowest level")
-    clb = plt.colorbar()
-    clb.set_label('Kinetic energy (m$^{2}$ s$^{-2}$)')
+        plt.subplot(2, 1, 2)
+        plt.imshow(np.real(KEcomp), origin='upper', extent=(0, 360, -90, 90), norm=norm, aspect='auto')
+        plt.xlabel('Latitude ($^{\circ}$)')
+        plt.ylabel('Longitude ($^{\circ}$)')
+        plt.title("Spherical harmonics reconstruction, lowest level")
+        clb = plt.colorbar()
+        clb.set_label('Kinetic energy (m$^{2}$ s$^{-2}$)')
 
-    plt.tight_layout()
-    plt.savefig(input.resultsf + '/figures/KEmap_lowest_%i_%s.pdf' % (output.ntsi, coord))
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(input.resultsf + '/figures/KEmap_lowest_%i_%s.pdf' % (output.ntsi, coord))
+        plt.close()
 
 
 def maketable(x, y, z, xname, yname, zname, resultsf, fname):
@@ -2112,14 +2124,23 @@ def profile(input, grid, output, z, stride=50, axis=None, save=True, use_p=True,
         #         col_lor.append('r')
         # else:
         #     ax.plot(z['value'][1995,:,0],grid.Altitude,'r--',zorder=111)
+
         rp, = ax.plot(x[np.int(np.floor(grid.nv / 2))], y[np.int(np.floor(grid.nv / 2))] * unit, 'k+', ms=5, alpha=0.5)
         gp, = ax.plot(x[np.int(np.floor(grid.nv * 0.75))], y[np.int(np.floor(grid.nv * 0.75))] * unit, 'k*', ms=5, alpha=0.5)
+        # # Plot the photosphere of the planet 
+        # if input.RT==1:
+        #     t1_sw = np.cumsum(output.tau_sw[column, ::-1, -1],axis=0) 
+        #     t1_lw = np.cumsum(output.tau_lw[column, ::-1, -1],axis=0) 
+        #     sw_size = output.tau_sw[column, ::-1, -1].size
+        #     lw_size = output.tau_lw[column, ::-1, -1].size
+        #     tp_sw, = ax.plot(x[sw_size - np.argmax(t1_sw >= 1)], y[sw_size - np.argmax(t1_sw >= 1)]* unit, 'k^', ms=5, alpha=0.5)
+        #     tp_lw, = ax.plot(x[lw_size - np.argmax(t1_lw >= 1)], y[lw_size - np.argmax(t1_lw >= 1)]* unit, 'kv', ms=5, alpha=0.5)
 
     if ylog:
         ax.set_yscale("log")
 
     # add an insert showing the position of
-    inset_pos = [0.8, 0.7, 0.18, 0.18]
+    inset_pos = [0.8, 0.6, 0.18, 0.18]
     ax_inset = ax.inset_axes(inset_pos)
     ax_inset.scatter(col_lon, col_lat, c=col_lor, s=1.0)
     ax_inset.tick_params(axis='both',
@@ -2140,7 +2161,7 @@ def profile(input, grid, output, z, stride=50, axis=None, save=True, use_p=True,
     else:
         ax.set_ylabel('Altitude (m)')
     ax.set_xlabel(z['label'])
-    ax.legend([rp, gp], ['z=0.5*ztop', 'z=0.75*ztop'], loc="upper right", fontsize='xx-small')
+    # ax.legend([rp, gp, tp_sw, tp_lw], [r'$z=0.5 \cdot z_{top}$', r'$z=0.75 \cdot z_{top}$', r'$\tau_{sw}=1$', r'$\tau_{lw}=1$'], loc="upper right", fontsize='xx-small')
     ax.set_title('Time = %#.3f - %#.3f days' % (output.time[0], output.time[-1]))
     ax.get_xaxis().get_major_formatter().set_useOffset(False)
     ax.tick_params(axis='x', labelrotation=45 )
@@ -2159,7 +2180,7 @@ def profile(input, grid, output, z, stride=50, axis=None, save=True, use_p=True,
             ycoord = "z"
         fname = f"{z['name']}{ycoord}profile_i{output.ntsi}_l{output.nts}"
         pfile = output_path / (fname.replace(".", "+") + '.pdf')
-        plt.savefig(pfile)
+        plt.savefig(pfile, dpi=600)
 
         plt.close()
         pfile = str(pfile)
