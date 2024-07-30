@@ -46,9 +46,9 @@
 
 #include "phy_module_base.h"
 
-#define rt_type_default "DualbandGray"
+// #define rt_type_default "DualbandGray"
 
-enum radiative_transfer_types { DUALBANDGRAY = 0, PICKETFENCE = 1 };
+// enum radiative_transfer_types { DUALBANDGRAY = 0, PICKETFENCE = 1, FREEDMAN = 2 };
 
 class radiative_transfer : public phy_module_base
 {
@@ -229,6 +229,11 @@ private:
     double* Gp__dff_l;
     double* Bp__dff_l;
 
+    // Freedman scheme variables 
+    double* k_IR__h;
+    double* k_V__h;
+    double* k_IR_nv_d;
+    double* k_V_nv_d;
 
     //  These arrays are for temporary usage in RT code
     double* dtemp;
