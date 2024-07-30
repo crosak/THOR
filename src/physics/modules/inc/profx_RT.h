@@ -1792,6 +1792,254 @@ __global__ void rtm_picket_fence(double *pressure_d,
 }
 
 //////////////////////////////////////////////////////////////
+__device__ void ts_short_char_freedman(int       id,
+                              const int nlay,
+                              const int nlev,
+                              double *  Altitude_d,
+                              double *  Altitudeh_d,
+                              double *  Rho_d,
+                              double *  Tl,
+                              double *  pl,
+                              double *  pe,
+                              double *  k_V_nv_d,
+                              double *  k_IR_nv_d,
+                              double *  net_F_nvi_d,
+                              double *  mu_s,
+                              double    F0,
+                              double    Tint,
+                              double    grav,
+                              double    AB_d,
+                              //Kitzman working variables
+                              double *tau_Ve__df_e,
+                              double *tau_IRe__df_e,
+                              double *Te__df_e,
+                              bool    bezier,
+                              double *be__df_e,
+                              double *sw_down__df_e,
+                              double *sw_down_b__df_e,
+                              double *sw_up__df_e,
+                              double *lw_down__df_e,
+                              double *lw_down_b__df_e,
+                              double *lw_up__df_e,
+                              double *lw_up_b__df_e,
+                              double *lw_net__df_e,
+                              double *sw_net__df_e,
+                              // lw_grey_updown_linear working variables
+                              double *dtau__dff_l,
+                              double *del__dff_l,
+                              double *edel__dff_l,
+                              double *e0i__dff_l,
+                              double *e1i__dff_l,
+                              double *Am__dff_l,
+                              double *Bm__dff_l,
+                              double *lw_up_g__dff_e,
+                              double *lw_down_g__dff_e,
+                              double *Gp__dff_l,
+                              double *Bp__dff_l,
+                              double *ASR_d,
+                              double *OLR_d) {
+    // dependencies
+    //// powll -> include math
+    //// log10f -> include math
+    //// nlay -> layers
+    //// nlev -> layers +1
+    //// linear_log_interp -> function
+    //// tau_struct -> function
+    //// sw_grey_down -> function
+    //// lw_grey_updown_linear -> function
+
+    const double pi = atan(1.0) * 4;
+    // const double twopi = 2.0 * pi;
+    const double StBC = 5.670374419e-8;
+
+    // work variables
+    double Finc;
+
+
+    // start operation
+
+    ASR_d[id] = 0.0;
+    OLR_d[id] = 0.0;
+
+    ///////////////////
+    // Find temperature at layer edges through interpolation and extrapolation
+    if (bezier) {
+        //  Perform interpolation using Bezier peicewise polynomial interpolation
+
+
+        for (int i = nlay - 2; i > 0; i--) {
+            bezier_altitude_interpolation(
+                id, nlay, i, Altitude_d, Tl, Altitudeh_d[i], Te__df_e[id * nlev + i]);
+        }
+
+        bezier_altitude_interpolation(id,
+                                      nlay,
+                                      nlay - 2,
+                                      Altitude_d,
+                                      Tl,
+                                      Altitudeh_d[nlay - 1],
+                                      Te__df_e[id * nlev + nlay - 1]);
+
+        /*
+            for (int i = nlay-2; i > 0; i--)
+            {
+                bezier_interpolation(   id,
+                                        nlay,
+                                        i,
+                                        pl,
+                                        Tl,
+                                        pe[id * nlev + i],
+                                        Te__df_e[id * nlev + i]);
+            }
+
+
+            bezier_interpolation(   id,
+                                    nlay,
+                                    nlay-2,
+                                    pl,
+                                    Tl,
+                                    pe[id * nlev + nlay - 1],
+                                    Te__df_e[id * nlev + nlay - 1]);
+            */
+    }
+    else {
+        //Perform interpolation using linear interpolation
+        /*
+            for (int i = nlay-2; i > -1; i--) {
+                linear_log_interp(  id,
+                                    i,
+                                    nlay,
+                                    nlev,
+                                    Altitude_d,
+                                    Altitudeh_d,
+                                    Tl,
+                                    Te__df_e);
+            }
+            */
+    }
+
+    //  Edges are linearly interpolated
+
+    Te__df_e[id * nlev + nlev - 1] =
+        pow(10.0,
+            (log10(Tl[id * nlay + nlay - 1])
+             + (log10(Altitude_d[nlay - 1] / Altitudeh_d[nlev - 2])
+                / log10(Altitudeh_d[nlev - 1] / Altitudeh_d[nlev - 2])
+
+                    )
+                   * log10(Tl[id * nlay + nlay - 1] / Te__df_e[id * nlev + nlev - 2])));
+
+    Te__df_e[id * nlev + 0] =
+        pow(10.0,
+            (log10(Tl[id * nlay + 0])
+             + (log10(Altitude_d[0] / Altitudeh_d[1]) / log10(Altitudeh_d[0] / Altitudeh_d[1])
+
+                    )
+                   * log10(Tl[id * nlay + 0] / Te__df_e[id * nlev + 1])));
+
+
+    ///////////////////
+    // Shortwave fluxes
+
+    for (int i = 0; i < nlev; i++) {
+        sw_down__df_e[id * nlev + i] = 0.0;
+        sw_up__df_e[id * nlev + i]   = 0.0;
+    }
+
+
+    // Incident flux in band
+    if (mu_s[id] > 0.0) {
+        Finc = (1.0 - AB_d) * F0;
+
+
+        // Find the opacity structure
+        tau_struct(id, nlev, Rho_d, pl, grav, Altitudeh_d, k_V_nv_d, 1, 0, tau_Ve__df_e);
+
+        //printf("tau_struct finished\n");
+
+
+        sw_grey_down(id, nlev, Finc, tau_Ve__df_e, sw_down_b__df_e, mu_s);
+
+        // Sum all bands
+        for (int i = 0; i < nlev; i++) {
+            sw_down__df_e[id * nlev + i] = sw_down_b__df_e[id * nlev + i];
+        }
+
+        ASR_d[id] += sw_down__df_e[id * nlev + nlev - 1];
+    }
+    else {
+        //sw darkside
+    }
+
+
+    // Long wave two-stream fluxes
+    for (int i = 0; i < nlev; i++) {
+        lw_down__df_e[id * nlev + i] = 0.0;
+        lw_up__df_e[id * nlev + i]   = 0.0;
+
+        lw_up_b__df_e[id * nlev + i]   = 0.0;
+        lw_down_b__df_e[id * nlev + i] = 0.0;
+    }
+
+    // Find the opacity structure
+    tau_struct(id, nlev, Rho_d, pl, grav, Altitudeh_d, k_IR_nv_d, 1, 0, tau_IRe__df_e);
+
+
+    //printf("tau_struct finished\n");
+
+    // Blackbody fluxes (note divide by pi for correct units)
+    for (int i = 0; i < nlev; i++) {
+        be__df_e[id * nlev + i] = (StBC * pow((Te__df_e[id * nlev + i]), 4.0) / pi);
+    }
+
+
+    double be_int = (StBC * pow((Tint), 4.0) / pi);
+
+    // Calculate lw flux
+    lw_grey_updown_linear(id,
+                          nlay,
+                          nlev,
+                          be__df_e,
+                          tau_IRe__df_e,
+                          lw_up_b__df_e,
+                          lw_down_b__df_e,
+                          dtau__dff_l,
+                          del__dff_l,
+                          edel__dff_l,
+                          e0i__dff_l,
+                          e1i__dff_l,
+                          Am__dff_l,
+                          Bm__dff_l,
+                          lw_up_g__dff_e,
+                          lw_down_g__dff_e,
+                          Gp__dff_l,
+                          Bp__dff_l,
+                          be_int);
+
+    //printf("lw_grey_updown_linear finished\n");
+
+
+    // Sum all bands
+    for (int i = 0; i < nlev; i++) {
+        lw_up__df_e[id * nlev + i] = lw_up__df_e[id * nlev + i] + lw_up_b__df_e[id * nlev + i];
+        lw_down__df_e[id * nlev + i] = lw_down__df_e[id * nlev + i] + lw_down_b__df_e[id * nlev + i];
+    }
+
+    OLR_d[id] += lw_up__df_e[id * nlev + nlev - 1];
+
+
+    // Net fluxes
+    for (int i = 0; i < nlev; i++) {
+        lw_net__df_e[id * nlev + i] = lw_down__df_e[id * nlev + i] - lw_up__df_e[id * nlev + i];
+        sw_net__df_e[id * nlev + i] = sw_down__df_e[id * nlev + i] - sw_up__df_e[id * nlev + i];
+        net_F_nvi_d[id * nlev + i]  = lw_net__df_e[id * nlev + i] + sw_net__df_e[id * nlev + i];
+    }
+
+
+    //printf("Kitzmann finished\n");
+}
+
+//////////////////////////////////////////////////////////////
 
 __global__ void rtm_freedman(double *pressure_d,
                              double *pressureh_d,
