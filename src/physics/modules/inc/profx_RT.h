@@ -952,8 +952,7 @@ __device__ void tau_struct(int     id,
     // running sum of optical depth
     // added a ghost level above the grid model, otherwise tau_sum = 0.0
     //tau_sum = 0.0;
-    tau_sum =
-        (kRoss[id * nlay * nchan + channel * nlay + nlay - 1] * pl[id * nlay + nlay - 1]) / gravity;
+    tau_sum = (kRoss[id * nlay * nchan + channel * nlay + nlay - 1] * pl[id * nlay + nlay - 1]) / gravity;
     tau_struc_e[id * nlev + nlev - 1] = tau_sum;
 
     //tau_sum = 0.0;
@@ -973,8 +972,7 @@ __device__ void tau_struct(int     id,
 
 
         // Optical depth of layer assuming hydrostatic equilibirum  //////////////////// kappa * rho * delta height  (old: kappa *delP/gravity)
-        tau_lay = kRoss[id * nlay * nchan + channel * nlay + level] * delPdelAlt
-                  * Rho_d[id * nlay + level];
+        tau_lay = kRoss[id * nlay * nchan + channel * nlay + level] * delPdelAlt * Rho_d[id * nlay + level];
         /*
         if (level == (nlay - 1) || level == 0 )
         {
@@ -1227,7 +1225,7 @@ __device__ void ts_short_char(int       id,
                               double *Bp__dff_l,
                               double *ASR_d,
                               double *OLR_d) {
-    // dependcies
+    // dependencies
     //// powll -> include math
     //// log10f -> include math
     //// nlay -> layers
@@ -1345,8 +1343,7 @@ __device__ void ts_short_char(int       id,
 
 
             // Find the opacity structure
-            tau_struct(
-                id, nlev, Rho_d, pl, grav, Altitudeh_d, k_V_3_nv_d, 3, channel, tau_Ve__df_e);
+            tau_struct(id, nlev, Rho_d, pl, grav, Altitudeh_d, k_V_3_nv_d, 3, channel, tau_Ve__df_e);
 
             //printf("tau_struct finished\n");
 
@@ -1421,8 +1418,7 @@ __device__ void ts_short_char(int       id,
         // Sum all bands
         for (int i = 0; i < nlev; i++) {
             lw_up__df_e[id * nlev + i] = lw_up__df_e[id * nlev + i] + lw_up_b__df_e[id * nlev + i];
-            lw_down__df_e[id * nlev + i] =
-                lw_down__df_e[id * nlev + i] + lw_down_b__df_e[id * nlev + i];
+            lw_down__df_e[id * nlev + i] = lw_down__df_e[id * nlev + i] + lw_down_b__df_e[id * nlev + i];
         }
 
         OLR_d[id] += lw_up__df_e[id * nlev + nlev - 1];
@@ -1794,3 +1790,308 @@ __global__ void rtm_picket_fence(double *pressure_d,
         //printf("Column complete");
     }
 }
+
+//////////////////////////////////////////////////////////////
+
+__global__ void rtm_freedman(double *pressure_d,
+                             double *pressureh_d,
+                             double *temperature_d,
+                             double *Rho_d,
+                             double  gravit,
+                             double *Cp_d,
+                             double *lonlat_d,
+                             double *Altitude_d,
+                             double *Altitudeh_d,
+                             double  r_rob,
+                             double  radius_star,
+                             double *dtemp,
+                             double  timestep,
+                             double  tint,
+                             double  alb,
+                             double  kappa_sw,
+                             double  kappa_lw,
+                             bool    latf_lw,
+                             double  kappa_lw_pole,
+                             double  F0_d,
+                             int     num,
+                             int     nv,
+                             int     nvi,
+                             double  A,
+                             double *zenith_angles,
+                             double *insol_d,
+                             bool    surface,
+                             double *Tsurface_d,  // ??? relevant
+                             double *surf_flux_d, // ??? relevant
+                             double *areasT_d,
+                             double *ASR_d, // ??? relevant
+                             double *OLR_d, // ??? relevant
+                             double *profx_Qheat_d,
+                             double *DG_Qheat_d, // internal qheat for debugging
+                             double *Rd_d,
+                             double  Qheat_scaling,
+                             double  met,
+                             double *OpaTableTemperature,
+                             double *OpaTablePressure,
+                             double *OpaTableKappa,
+                             double *k_IR_nv_d,
+                             double *k_V_nv_d,
+                             double *net_F_nvi_d,
+                             //Kitzman working variables
+                             double *tau_Ve__df_e,
+                             double *tau_IRe__df_e,
+                             double *Te__df_e,
+                             bool    bezier,
+                             double *be__df_e,
+                             double *sw_down__df_e,
+                             double *sw_down_b__df_e,
+                             double *sw_up__df_e,
+                             double *lw_down__df_e,
+                             double *lw_down_b__df_e,
+                             double *lw_up__df_e,
+                             double *lw_up_b__df_e,
+                             double *lw_net__df_e,
+                             double *sw_net__df_e,
+                             // lw_grey_updown_linear working variables
+                             double *dtau__dff_l,
+                             double *del__dff_l,
+                             double *edel__dff_l,
+                             double *e0i__dff_l,
+                             double *e1i__dff_l,
+                             double *Am__dff_l,
+                             double *Bm__dff_l,
+                             double *lw_up_g__dff_e,
+                             double *lw_down_g__dff_e,
+                             double *Gp__dff_l,
+                             double *Bp__dff_l,
+                             //general model parameters
+                             bool rt1Dmode,
+                             bool DeepModel) {
+
+
+    //
+    //  Description:
+    //
+    //
+    //
+    //  Input: .
+    //
+    //  Output:
+    //
+
+
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+
+    const double pi = atan(1.0) * 4;
+    double flux_top = 0.0;
+
+    if (id < num) {
+
+
+        for (int lev = 0; lev < nv; lev++) {
+
+            dtemp[id * nv + lev] = 0.0;
+        }
+
+        // rescale zenith angle
+        /*
+        double TransPolAngle;
+        TransPolAngle = asin((radius_star-Altitude_d[id * nv + 0]) / r_rob);
+        zenith_angles[id] = (zenith_angles[id] + TransPolAngle) / (1 + TransPolAngle);
+        */
+
+        // Read non-constant kappa values from the Rosseland mean opacity tables of Freedman et al.(2014)
+        for (int level = 0; level < nv; level++) {
+
+
+            kernel_k_Ross_Freedman(temperature_d[id * nv + level],
+                                   pressure_d[id * nv + level],
+                                   met,
+                                   k_IR_nv_d[id * nv + level]);
+
+
+            /*
+            kernel_k_Ross_Freedman_bilinear_interpolation_polynomial_fit(temperature_d[id * nv + level],
+                pressure_d[id * nv + level],
+                OpaTableTemperature,
+                OpaTablePressure,
+                OpaTableKappa,
+                k_IR_2_nv_d[id * nv * 2 + 0 * nv + level]);
+            */
+
+
+            // Compute opacities
+            // double kappa_lw_lat;
+            if (latf_lw) {
+                //latitude dependence of opacity, for e.g., earth
+                // not well tested yet
+                k_IR_nv_d[id * nv + level] = k_IR_nv_d[id * nv + level] + k_IR_nv_d[id * nv + level] * (kappa_lw_pole / kappa_lw) * pow(sin(lonlat_d[id * 2 + 1]), 2);
+            }
+            else {
+                k_IR_nv_d[id * nv + level] = k_IR_nv_d[id * nv + level];
+            }
+
+            // I don't know how to do this better for now... 
+            k_V_nv_d[id * nv + level] = kappa_sw;
+        }
+        // !! Radiation - Comment in what scheme you want to use - Heng model won't work!
+
+        if (zenith_angles[id] > 0.0) { //&& zenith_angles[id] < 0.3) {
+                                       //if (id==340) {
+
+            flux_top    = (1.0 - alb) * F0_d;
+            insol_d[id] = flux_top;
+
+            ts_short_char_freedman(id,
+                                  nv,
+                                  nvi,
+                                  Altitude_d,
+                                  Altitudeh_d,
+                                  Rho_d,
+                                  temperature_d,
+                                  pressure_d,
+                                  pressureh_d,
+                                  k_V_nv_d,
+                                  k_IR_nv_d,
+                                  net_F_nvi_d,
+                                  zenith_angles,
+                                  F0_d,
+                                  tint,
+                                  gravit,
+                                  alb,
+                                  //Kitzman working variables
+                                  tau_Ve__df_e,
+                                  tau_IRe__df_e,
+                                  Te__df_e,
+                                  bezier,
+                                  be__df_e,
+                                  sw_down__df_e,
+                                  sw_down_b__df_e,
+                                  sw_up__df_e,
+                                  lw_down__df_e,
+                                  lw_down_b__df_e,
+                                  lw_up__df_e,
+                                  lw_up_b__df_e,
+                                  lw_net__df_e,
+                                  sw_net__df_e,
+                                  // lw_grey_updown_linear working variables
+                                  dtau__dff_l,
+                                  del__dff_l,
+                                  edel__dff_l,
+                                  e0i__dff_l,
+                                  e1i__dff_l,
+                                  Am__dff_l,
+                                  Bm__dff_l,
+                                  lw_up_g__dff_e,
+                                  lw_down_g__dff_e,
+                                  Gp__dff_l,
+                                  Bp__dff_l,
+                                  ASR_d,
+                                  OLR_d);
+        }
+        else {
+            flux_top    = 0.0;
+            insol_d[id] = 0.0;
+
+            ts_short_char_freedman(id,
+                                  nv,
+                                  nvi,
+                                  Altitude_d,
+                                  Altitudeh_d,
+                                  Rho_d,
+                                  temperature_d,
+                                  pressure_d,
+                                  pressureh_d,
+                                  k_V_nv_d,
+                                  k_IR_nv_d,
+                                  net_F_nvi_d,
+                                  zenith_angles,
+                                  flux_top,
+                                  tint,
+                                  gravit,
+                                  alb,
+                                  //Kitzman working variables
+                                  tau_Ve__df_e,
+                                  tau_IRe__df_e,
+                                  Te__df_e,
+                                  bezier,
+                                  be__df_e,
+                                  sw_down__df_e,
+                                  sw_down_b__df_e,
+                                  sw_up__df_e,
+                                  lw_down__df_e,
+                                  lw_down_b__df_e,
+                                  lw_up__df_e,
+                                  lw_up_b__df_e,
+                                  lw_net__df_e,
+                                  sw_net__df_e,
+                                  // lw_grey_updown_linear working variables
+                                  dtau__dff_l,
+                                  del__dff_l,
+                                  edel__dff_l,
+                                  e0i__dff_l,
+                                  e1i__dff_l,
+                                  Am__dff_l,
+                                  Bm__dff_l,
+                                  lw_up_g__dff_e,
+                                  lw_down_g__dff_e,
+                                  Gp__dff_l,
+                                  Bp__dff_l,
+                                  ASR_d,
+                                  OLR_d);
+        }
+
+
+        for (int level = 0; level < nv; level++) {
+            dtemp[id * nv + level] =
+                1 * //(gravit / Cp_d) *
+                (net_F_nvi_d[id * nvi + level] - net_F_nvi_d[id * nvi + level + 1])
+                / ((Altitudeh_d[level] - Altitudeh_d[level + 1]));
+            //((Altitudeh_d[level] - Altitudeh_d[level+1])*Rho_d[id*nv  + level]*gravit);
+        }
+
+
+        if (surface == true) {
+            Tsurface_d[id]  = timestep * dtemp[id * nv + 0];
+            surf_flux_d[id] = dtemp[id * nv + 0];
+
+            if (Tsurface_d[id] < 0)
+                Tsurface_d[id] = 0;
+        }
+
+        //printf("Tsurface_d is computed\n");
+
+        //calculate rscale and rescale ASR and OLR for this point
+        double rscale;
+        if (DeepModel) {
+            rscale = (A + Altitudeh_d[nv]) / A;
+        }
+        else {
+            rscale = 1.0;
+        }
+
+        ASR_d[id] = ASR_d[id] * areasT_d[id] * pow(rscale, 2);
+        OLR_d[id] = OLR_d[id] * areasT_d[id] * pow(rscale, 2);
+
+
+        for (int lev = 0; lev < nv; lev++) {
+
+
+            if (pressure_d[id * nv + lev] + Rd_d[id * nv + lev] / 
+                (Cp_d[id * nv + lev] - Rd_d[id * nv + lev]) * dtemp[id * nv + lev] * timestep
+                < 0) {
+                //trying to prevent too much cooling resulting in negative pressure in dyn core
+                dtemp[id * nv + lev] = -pressure_d[id * nv + lev] / timestep;
+            }
+            DG_Qheat_d[id * nv + lev] = dtemp[id * nv + lev];
+            profx_Qheat_d[id * nv + lev] += Qheat_scaling * dtemp[id * nv + lev];
+            if (id == 430) {
+                if (isnan(profx_Qheat_d[id * nv + lev])) {
+                    printf("profx_Qheat_d has NaNs - stop here");
+                }
+            }
+            // }
+        }
+
+        //printf("Column complete");
+    }
+}    
