@@ -97,25 +97,29 @@ bool radiative_transfer::initialise_memory(const ESP &              esp,
 
     // double picket_fence_mod = false;
 
-    bool config_OK = true;
+    // bool config_OK = true;
 
-    if (rt_type_str == "DualbandGray" || rt_type_str == "DualbandGrey" || rt_type_str == "DG") {
-        rt_type = DUALBANDGRAY;
-        config_OK &= true;
-    }
-    else if (rt_type_str == "PicketFence" || rt_type_str == "PF") {
-        rt_type = PICKETFENCE;
-        config_OK &= true;
-    }
-    else {
-        log::printf("rt_type config item not recognised: [%s]\n", rt_type_str.c_str());
-        config_OK &= false;
-    }
+    // if (rt_type_str == "DualbandGray" || rt_type_str == "DualbandGrey" || rt_type_str == "DG") {
+    //     rt_type = DUALBANDGRAY;
+    //     config_OK &= true;
+    // }
+    // else if (rt_type_str == "PicketFence" || rt_type_str == "PF") {
+    //     rt_type = PICKETFENCE;
+    //     config_OK &= true;
+    // }
+    // else if (rt_type_str == "Freedman" || rt_type_str == "FR") {
+    //     rt_type = FREEDMAN;
+    //     config_OK &= true;
+    // }
+    // else {
+    //     log::printf("rt_type config item not recognised: [%s]\n", rt_type_str.c_str());
+    //     config_OK &= false;
+    // }
 
-    if (!config_OK) {
-        log::printf("Error in configuration file\n");
-        exit(-1);
-    }
+    // if (!config_OK) {
+    //     log::printf("Error in configuration file\n");
+    //     exit(-1);
+    // }
 
     cudaMalloc((void **)&ASR_d, esp.point_num * sizeof(double));
     cudaMalloc((void **)&OLR_d, esp.point_num * sizeof(double));
@@ -214,11 +218,88 @@ bool radiative_transfer::initialise_memory(const ESP &              esp,
         fsw_up_h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
         fsw_dn_h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
     }
+    else if (rt_type == FREEDMAN) {
+        //  Rad Transfer
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        cudaMalloc((void **)&phtemp, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&dtemp, esp.nv * esp.point_num * sizeof(double));
+
+        cudaMalloc((void **)&qheat_d, esp.nv * esp.point_num * sizeof(double));
+        qheat_h = (double *)malloc(esp.point_num * esp.nv * sizeof(double));
+
+        insol_h = (double *)malloc(esp.point_num * sizeof(double));
+        cudaMalloc((void **)&insol_d, esp.point_num * sizeof(double));
+
+
+        cudaMalloc((void **)&surf_flux_d, esp.point_num * sizeof(double));
+
+
+        // Adopting existing parameters used for picket-fence for the Freedman scheme
+
+        cudaMalloc((void **)&k_IR_nv_d, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&k_V_nv_d, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&net_F_nvi_d, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&AB_d, esp.point_num * sizeof(double));        
+
+        cudaMalloc((void **)&OpaTableTemperature_d, 1060 * sizeof(double));
+        cudaMalloc((void **)&OpaTablePressure_d, 1060 * sizeof(double));
+        cudaMalloc((void **)&OpaTableKappa_d, 1060 * sizeof(double));
+
+
+        k_IR__h = (double *)malloc(esp.nv * esp.point_num * sizeof(double));
+        k_V__h  = (double *)malloc(esp.nv * esp.point_num * sizeof(double));
+        net_F_h   = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
+        AB__h     = (double *)malloc(esp.point_num * sizeof(double));
+
+        OpaTableTemperature__h = (double *)malloc(1060 * sizeof(double));
+        OpaTablePressure__h    = (double *)malloc(1060 * esp.point_num * sizeof(double));
+        OpaTableKappa__h       = (double *)malloc(1060 * esp.point_num * sizeof(double));
+
+
+        // picket fence parameters     //Kitzman working variables
+        cudaMalloc((void **)&tau_Ve__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&tau_IRe__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&Te__df_e,esp.nvi * esp.point_num * sizeof(double)); // as well used for dry convective adjustment
+        cudaMalloc((void **)&be__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&sw_down__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&sw_down_b__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&sw_up__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&lw_down__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&lw_down_b__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&lw_up__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&lw_up_b__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&lw_net__df_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&sw_net__df_e, esp.nvi * esp.point_num * sizeof(double));
+
+        lw_net__h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
+        sw_net__h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
+
+
+        // picket fence parameters     // lw_grey_updown_linear working variables
+        cudaMalloc((void **)&dtau__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&del__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&edel__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&e0i__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&e1i__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&Bm__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&Am__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&lw_up_g__dff_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&lw_down_g__dff_e, esp.nvi * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&Gp__dff_l, esp.nv * esp.point_num * sizeof(double));
+        cudaMalloc((void **)&Bp__dff_l, esp.nv * esp.point_num * sizeof(double));
+
+
+        tau_h    = (double *)malloc(2 * esp.nv * esp.point_num * sizeof(double));
+        flw_up_h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
+        flw_dn_h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
+        fsw_up_h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
+        fsw_dn_h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
+    }
     else {
 
-        cudaMalloc((void **)&Te__df_e,
-                   esp.nvi * esp.point_num
-                       * sizeof(double)); // as well used for dry convective adjustment
+        cudaMalloc((void **)&Te__df_e,esp.nvi * esp.point_num * sizeof(double)); // as well used for dry convective adjustment
         //  Rad Transfer
         cudaMalloc((void **)&flw_up_d, esp.nvi * esp.point_num * sizeof(double));
         cudaMalloc((void **)&flw_dn_d, esp.nvi * esp.point_num * sizeof(double));
@@ -344,6 +425,81 @@ bool radiative_transfer::free_memory() {
 
         free(tau_h);
     }
+    else if (rt_type == FREEDMAN) {
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        cudaFree(phtemp);
+        cudaFree(dtemp);
+
+        cudaFree(qheat_d);
+        free(qheat_h);
+
+        cudaFree(insol_d);
+
+
+        cudaFree(surf_flux_d);
+        cudaFree(ASR_d);
+        cudaFree(OLR_d);
+
+        // Freedman parameters
+
+        cudaFree(k_IR_nv_d);
+        cudaFree(k_V_nv_d);
+        cudaFree(net_F_nvi_d);
+        cudaFree(AB_d);
+
+
+        free(k_IR__h);
+        free(k_V__h);
+        free(net_F_h);
+        free(AB__h);        
+
+        free(OpaTableTemperature__h);
+        free(OpaTablePressure__h);
+        free(OpaTableKappa__h);
+        cudaFree(OpaTableTemperature_d);
+        cudaFree(OpaTablePressure_d);
+        cudaFree(OpaTableKappa_d);
+
+
+        // picket fence parameters     //Kitzman working variables
+
+
+        cudaFree(tau_Ve__df_e);
+        cudaFree(tau_IRe__df_e);
+        cudaFree(Te__df_e); // as well used for dry convective adjustment
+        cudaFree(be__df_e);
+        cudaFree(sw_down__df_e);
+        cudaFree(sw_down_b__df_e);
+        cudaFree(sw_up__df_e);
+        cudaFree(lw_down__df_e);
+        cudaFree(lw_down_b__df_e);
+        cudaFree(lw_up__df_e);
+        cudaFree(lw_up_b__df_e);
+        cudaFree(lw_net__df_e);
+        cudaFree(sw_net__df_e);
+
+        free(lw_net__h);
+        free(sw_net__h);
+
+
+        // picket fence parameters     // lw_grey_updown_linear working variables
+        cudaFree(dtau__dff_l);
+        cudaFree(del__dff_l);
+        cudaFree(edel__dff_l);
+        cudaFree(e0i__dff_l);
+        cudaFree(e1i__dff_l);
+        cudaFree(Bm__dff_l);
+        cudaFree(Am__dff_l);
+        cudaFree(lw_up_g__dff_e);
+        cudaFree(lw_down_g__dff_e);
+        cudaFree(Gp__dff_l);
+        cudaFree(Bp__dff_l);
+
+
+        free(tau_h);
+    }
     else {
 
         cudaFree(Te__df_e); // as well used for dry convective adjustment
@@ -404,6 +560,24 @@ bool radiative_transfer::initial_conditions(const ESP &            esp,
 
     if (rt_type == PICKETFENCE) {
 
+        RTSetup(esp.Tstar,
+                esp.planet_star_dist,
+                esp.radius_star,
+                diff_ang_config,
+                sim.P_Ref,
+                sim.Gravit,
+                albedo_config,
+                esp.kappa_sw,
+                esp.kappa_lw,
+                latf_lw_config,
+                kappa_lw_pole_config,
+                n_lw_config,
+                n_sw_config,
+                esp.f_lw,
+                rt1Dmode_config,
+                sim.Tmean);
+    }
+    else if (rt_type == FREEDMAN) {
 
         RTSetup(esp.Tstar,
                 esp.planet_star_dist,
@@ -423,6 +597,7 @@ bool radiative_transfer::initial_conditions(const ESP &            esp,
                 sim.Tmean);
     }
     else {
+
         RTSetup(esp.Tstar,
                 esp.planet_star_dist,
                 esp.radius_star,
@@ -1021,6 +1196,127 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
                                             rt1Dmode,
                                             sim.DeepModel);
         }
+        else if (rt_type == FREEDMAN) {
+
+            Tirr = Tstar * pow((radius_star) / (planet_star_dist), 0.5);
+
+            F0_h = SIGMA_SB_th * pow(Tirr, 4.0);
+
+            // Read-in the Freedman et al. (2014) Rosseland-mean opacity tables
+            bool cudaStatus;
+            //double OpaTableTemperature__h[1060];
+            PF_text_file_to_array(
+                "src/physics/modules/src/OpaTableTemperature.txt", OpaTableTemperature__h, 1060);
+            //double OpaTablePressure__h[1060];
+            PF_text_file_to_array(
+                "src/physics/modules/src/OpaTablePressure.txt", OpaTablePressure__h, 1060);
+            //double OpaTableKappa__h[1060];
+            PF_text_file_to_array(
+                "src/physics/modules/src/OpaTableKappa.txt", OpaTableKappa__h, 1060);
+
+            cudaStatus = cudaMemcpy(OpaTableTemperature_d,
+                                    OpaTableTemperature__h,
+                                    1060 * sizeof(double),
+                                    cudaMemcpyHostToDevice);
+            if (cudaStatus != cudaSuccess) {
+                fprintf(stderr, "OpaTableTemperature_d cudaMemcpyHostToDevice failed!");
+                //goto Error;
+            }
+            cudaStatus = cudaMemcpy(OpaTablePressure_d,
+                                    OpaTablePressure__h,
+                                    1060 * sizeof(double),
+                                    cudaMemcpyHostToDevice);
+            if (cudaStatus != cudaSuccess) {
+                fprintf(stderr, "OpaTablePressure_d cudaMemcpyHostToDevice failed!");
+                //goto Error;
+            }
+            cudaStatus = cudaMemcpy(
+                OpaTableKappa_d, OpaTableKappa__h, 1060 * sizeof(double), cudaMemcpyHostToDevice);
+            if (cudaStatus != cudaSuccess) {
+                fprintf(stderr, "OpaTableKappa_d cudaMemcpyHostToDevice failed!");
+                //goto Error;
+            }
+
+            // check for error
+            cudaError_t error = cudaGetLastError();
+            if (error != cudaSuccess) {
+                // print the CUDA error message and exit
+                printf("CUDA error: %s\n", cudaGetErrorString(error));
+                exit(-1);
+            }
+
+
+            rtm_freedman<<<NBRT, NTH>>>(esp.pressure_d,
+                                        esp.pressureh_d,
+                                        esp.temperature_d,
+                                        esp.Rho_d,
+                                        sim.Gravit,
+                                        esp.Cp_d,
+                                        esp.lonlat_d,
+                                        esp.Altitude_d,
+                                        esp.Altitudeh_d,
+                                        esp.insolation.get_r_orb(),
+                                        radius_star,
+                                        dtemp,
+                                        time_step,
+                                        esp.Tint,
+                                        albedo,
+                                        kappa_sw,
+                                        kappa_lw,
+                                        latf_lw,
+                                        kappa_lw_pole,
+                                        F0_h,
+                                        esp.point_num,
+                                        esp.nv,
+                                        esp.nvi,
+                                        sim.A,
+                                        esp.insolation.get_device_cos_zenith_angles(),
+                                        insol_d,
+                                        esp.surface,
+                                        esp.Tsurface_d,
+                                        surf_flux_d,
+                                        esp.areasT_d,
+                                        ASR_d,
+                                        OLR_d,
+                                        esp.profx_Qheat_d,
+                                        qheat_d,
+                                        esp.Rd_d,
+                                        Qheat_scaling,
+                                        metalicity,
+                                        OpaTableTemperature_d,
+                                        OpaTablePressure_d,
+                                        OpaTableKappa_d,
+                                        k_IR_nv_d,
+                                        k_V_nv_d,
+                                        net_F_nvi_d,
+                                        tau_Ve__df_e, //Kitzman working variables
+                                        tau_IRe__df_e,
+                                        Te__df_e,
+                                        bezier,
+                                        be__df_e,
+                                        sw_down__df_e,
+                                        sw_down_b__df_e,
+                                        sw_up__df_e,
+                                        lw_down__df_e,
+                                        lw_down_b__df_e,
+                                        lw_up__df_e,
+                                        lw_up_b__df_e,
+                                        lw_net__df_e,
+                                        sw_net__df_e,
+                                        dtau__dff_l, // lw_grey_updown_linear working variables
+                                        del__dff_l,
+                                        edel__dff_l,
+                                        e0i__dff_l,
+                                        e1i__dff_l,
+                                        Am__dff_l,
+                                        Bm__dff_l,
+                                        lw_up_g__dff_e,
+                                        lw_down_g__dff_e,
+                                        Gp__dff_l,
+                                        Bp__dff_l,
+                                        rt1Dmode,
+                                        sim.DeepModel);
+        }
         else {
 
             rtm_dual_band<<<NBRT, NTH>>>(esp.pressure_d,
@@ -1093,7 +1389,7 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
 
             // double picket_fence_mod = false;
 
-            if (rt_type == PICKETFENCE) {
+            if (rt_type == PICKETFENCE || rt_type == FREEDMAN) {
             }
             else {
                 annual_insol<<<NBRT, NTH>>>(insol_ann_d, insol_d, nstep, esp.point_num);
@@ -1129,6 +1425,40 @@ bool radiative_transfer::configure(config_file &config_reader) {
         config_reader.append_config_var(
             "kappa_lw_pole", kappa_lw_pole_config, kappa_lw_pole_config);
 
+
+        // config_reader.append_config_var("f_lw", f_lw_config, f_lw_config);
+
+
+        config_reader.append_config_var("rt1Dmode", rt1Dmode_config, rt1Dmode_config);
+
+        // spin up spin down
+        config_reader.append_config_var("dgrt_spinup_start", spinup_start_step, spinup_start_step);
+        config_reader.append_config_var("dgrt_spinup_stop", spinup_stop_step, spinup_stop_step);
+        config_reader.append_config_var(
+            "dgrt_spindown_start", spindown_start_step, spindown_start_step);
+        config_reader.append_config_var(
+            "dgrt_spindown_stop", spindown_stop_step, spindown_stop_step);
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+    }
+    else if (rt_type == FREEDMAN) {
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        // basic star-planet properties
+        // config_reader.append_config_var("Tstar", Tstar_config, Tstar_config);
+        // config_reader.append_config_var(
+        //     "planet_star_dist", planet_star_dist_config, planet_star_dist_config);
+        // config_reader.append_config_var("radius_star", radius_star_config, radius_star_config);
+        //config_reader.append_config_var("diff_ang", diff_ang_config, diff_ang_config);
+        // config_reader.append_config_var("Tint", Tint_config, Tint_config);
+        config_reader.append_config_var("albedo", albedo_config, albedo_config);
+        // config_reader.append_config_var("tausw", tausw_config, tausw_config);
+        // config_reader.append_config_var("taulw", taulw_config, taulw_config);
+
+        // options for latitude dependence in longwave opacity
+        config_reader.append_config_var("latf_lw", latf_lw_config, latf_lw_config);
+        config_reader.append_config_var("kappa_lw_pole", kappa_lw_pole_config, kappa_lw_pole_config);
 
         // config_reader.append_config_var("f_lw", f_lw_config, f_lw_config);
 
@@ -1284,6 +1614,91 @@ bool radiative_transfer::store(const ESP &esp, storage &s) {
 
         //cuda_check_status_or_exit(__FILE__, __LINE__);
     }
+    if (rt_type == FREEDMAN) {
+        cudaMemcpy(insol_h, insol_d, esp.point_num * sizeof(double), cudaMemcpyDeviceToHost);
+        s.append_table(insol_h, esp.point_num, "/insol", "W m^-2", "insolation (instantaneous)");
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        cudaMemcpy(lw_net__h,
+                   lw_net__df_e,
+                   esp.nvi * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(lw_net__h, esp.nvi * esp.point_num, "/lw_net__h", "W m^-2", "net long-wave flux (LW)");
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        cudaMemcpy(sw_net__h,
+                   sw_net__df_e,
+                   esp.nvi * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(sw_net__h, esp.nvi * esp.point_num, "/sw_net__h", "W m^-2", "net short-wave flux (SW)");
+
+        cudaMemcpy(flw_up_h,
+                   lw_up__df_e,
+                   esp.nvi * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(flw_up_h, esp.nvi * esp.point_num, "/flw_up", "W m^-2", "upward flux (LW)");
+
+        cudaMemcpy(fsw_up_h,
+                   sw_up__df_e,
+                   esp.nvi * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(fsw_up_h, esp.nvi * esp.point_num, "/fsw_up", "W m^-2", "upward flux (SW)");
+
+        cudaMemcpy(flw_dn_h,
+                   lw_down__df_e,
+                   esp.nvi * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(flw_dn_h, esp.nvi * esp.point_num, "/flw_dn", "W m^-2", "downward flux (LW)");
+
+        cudaMemcpy(fsw_dn_h,
+                   sw_down__df_e,
+                   esp.nvi * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(fsw_dn_h, esp.nvi * esp.point_num, "/fsw_dn", "W m^-2", "downward flux (SW)");
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        //cudaMemcpy(tau_h, tau_Ve__df_e, esp.nvi * esp.point_num * sizeof(double), cudaMemcpyDeviceToHost);
+        s.append_table(tau_h,
+                       2 * esp.nv * esp.point_num,
+                       "/tau",
+                       " ",
+                       "optical depth across each layer (not total optical depth)");
+
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        cudaMemcpy(qheat_h, qheat_d, esp.nv * esp.point_num * sizeof(double), cudaMemcpyDeviceToHost);
+        s.append_table(qheat_h, esp.nv * esp.point_num, "/DGQheat", " ", "Double Gray Qheat");
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        // cudaMemcpy(Tsurface_h, Tsurface_d, esp.point_num * sizeof(double), cudaMemcpyDeviceToHost);
+        // s.append_table(Tsurface_h, esp.point_num, "/Tsurface", "K", "surface temperature");
+
+        s.append_value(Qheat_scaling, "/dgrt_qheat_scaling", " ", "Qheat scaling applied to DG");
+
+        s.append_value(ASR_tot, "/ASR", "W", "Absorbed Shortwave Radiation (global total)");
+        s.append_value(OLR_tot, "/OLR", "W", "Outgoing Longwave Radiation (global total)");
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+
+        cudaMemcpy(k_IR__h,
+                   k_IR_nv_d,
+                   esp.nv * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(k_IR__h, esp.nv * esp.point_num, "/k_IR__h", " ", "kappa for the IR band");
+
+        cudaMemcpy(k_V__h,
+                   k_V_nv_d,
+                   esp.nv * esp.point_num * sizeof(double),
+                   cudaMemcpyDeviceToHost);
+        s.append_table(k_V__h, esp.nv * esp.point_num, "/k_V__h", " ", "kappa for the V band");
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+    }
     else {
         cudaMemcpy(insol_h, insol_d, esp.point_num * sizeof(double), cudaMemcpyDeviceToHost);
         s.append_table(insol_h, esp.point_num, "/insol", "W m^-2", "insolation (instantaneous)");
@@ -1345,6 +1760,26 @@ bool radiative_transfer::store_init(storage &s) {
     // double picket_fence_mod = false;
 
     if (rt_type == PICKETFENCE) {
+        s.append_value(Tstar, "/Tstar", "K", "Temperature of host star");
+        // s.append_value(Tint, "/Tint", "K", "Temperature of interior heat flux");
+        s.append_value(planet_star_dist / AU_th,
+                       "/planet_star_dist",
+                       "au",
+                       "distance b/w host star and planet");
+        s.append_value(radius_star / R_SUN_th, "/radius_star", "R_sun", "radius of host star");
+
+        s.append_value(albedo, "/albedo", "-", "bond albedo of planet");
+        //  s.append_value(kappa_sw, "/kappa_sw", "-", "gray opacity of shortwave");
+        //  s.append_value(kappa_lw, "/kappa_lw", "-", "gray opacity of longwave");
+
+        s.append_value(latf_lw ? 1.0 : 0.0, "/latf_lw", "-", "use lat dependent opacity");
+        s.append_value(kappa_lw_pole, "/kappa_lw_pole", "-", "gray opacity of longwave at poles");
+
+        // s.append_value(f_lw, "/f_lw", "-", "fraction of taulw in well-mixed absorber");
+
+        //cuda_check_status_or_exit(__FILE__, __LINE__);
+    }
+    if (rt_type == FREEDMAN) {
         s.append_value(Tstar, "/Tstar", "K", "Temperature of host star");
         // s.append_value(Tint, "/Tint", "K", "Temperature of interior heat flux");
         s.append_value(planet_star_dist / AU_th,
