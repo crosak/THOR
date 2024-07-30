@@ -110,6 +110,7 @@ __host__ ESP::ESP(int *                 point_local_,
                   bool                  out_interm_momentum,
                   bool                  output_diffusion,
                   bool                  DiffSponge,
+                  radiative_transfer_types rt_type_,
                   init_PT_profile_types init_PT_profile_,
                   double                Tint_,
                   double                kappa_lw_,
@@ -141,6 +142,7 @@ __host__ ESP::ESP(int *                 point_local_,
     spring_beta(spring_beta_),
     logwriter(logwriter_),
     core_benchmark(core_benchmark_),
+    rt_type(rt_type_),
     init_PT_profile(init_PT_profile_),
     raysp_calc_mode(raysp_calc_mode_),
     ultrahot_thermo(ultrahot_thermo_),
@@ -504,7 +506,7 @@ __host__ bool ESP::initial_values(const std::string &initial_conditions_filename
             //
             //          Initial conditions for an isothermal Atmosphere
             //
-            if ((init_PT_profile == ISOTHERMAL || init_PT_profile == CONSTBV)
+            if ((init_PT_profile == ISOTHERMAL || init_PT_profile == CONSTBV || init_PT_profile == BDISOTHERMAL)
                 && ultrahot_thermo == NO_UH_THERMO) {
                 //isothermal initial profile, no variation in Rd or Cp due to H-H2 reaction
                 //exact solution to hydrostatic equation
@@ -525,7 +527,7 @@ __host__ bool ESP::initial_values(const std::string &initial_conditions_filename
                         rho_L = sim.P_Ref / (sim.Rd * sim.Tmean);
                         T_L   = sim.Tmean;
                         dz    = Altitude_h[0];
-			if (sim.GravHeightVar) {
+			            if (sim.GravHeightVar) {
                             g_L = sim.Gravit * pow(sim.A / (sim.A + Altitude_h[0]), 2);
                         }
                         else {
@@ -539,7 +541,7 @@ __host__ bool ESP::initial_values(const std::string &initial_conditions_filename
                         rho_L = Rho_h[i * nv + lev - 1];
                         T_L   = temperature_h[i * nv + lev - 1];
                         dz    = Altitude_h[lev] - Altitude_h[lev - 1];
-			if (sim.GravHeightVar) {
+			            if (sim.GravHeightVar) {
                             g_L = sim.Gravit * pow(sim.A / (sim.A + Altitude_h[lev - 1]), 2);
                         }
                         else {
