@@ -376,7 +376,8 @@ int main(int argc, char** argv) {
     string core_benchmark_str("HeldSuarez");
     config_reader.append_config_var(
         "core_benchmark", core_benchmark_str, string(core_benchmark_default)); //
-
+    
+    // Convective adjustment options
     config_reader.append_config_var("conv_adj", sim.conv_adj, conv_adj_default);
     config_reader.append_config_var("conv_adj_iter", sim.conv_adj_iter, conv_adj_iter_default);
     config_reader.append_config_var(
@@ -384,7 +385,8 @@ int main(int argc, char** argv) {
     string conv_adj_type_str("hourdin");
     config_reader.append_config_var(
         "conv_adj_type", conv_adj_type_str, string(conv_adj_type_default));
-
+    
+    // Output options
     int GPU_ID_N = 0;
     config_reader.append_config_var("GPU_ID_N", GPU_ID_N, GPU_ID_N_default);
 
@@ -409,6 +411,10 @@ int main(int argc, char** argv) {
     config_reader.append_config_var("custom_log_n_out", custom_log_n_out, custom_log_n_out_default);
     int log_n_out = sim.n_out;
     config_reader.append_config_var("log_n_out", log_n_out, log_n_out_default);
+    
+    // Radiative Transfer Type
+    string rt_type_str("DualbandGray");
+    config_reader.append_config_var("rt_type", rt_type_str, string(rt_type_default));
 
     // Init PT profile
     string init_PT_profile_str("isothermal");
@@ -672,11 +678,39 @@ int main(int argc, char** argv) {
         init_PT_profile = CONSTBV;
         config_OK &= true;
     }
+    else if (init_PT_profile_str == "freedman") {
+        init_PT_profile = BDISOTHERMAL;
+        config_OK &= true;
+    }
     else {
         log::printf("init_PT_profile config item not recognised: [%s]\n",
                     init_PT_profile_str.c_str());
         config_OK &= false;
     }
+
+    // Check rt_type string
+    radiative_transfer_types rt_type = DUALBANDGRAY;
+    if (rt_type_str == "DualbandGray" || rt_type_str == "DualbandGrey" || rt_type_str == "DG") {
+        rt_type = DUALBANDGRAY;
+        config_OK &= true;
+    }
+    else if (rt_type_str == "PicketFence" || rt_type_str == "PF") {
+        rt_type = PICKETFENCE;
+        config_OK &= true;
+    }
+    else if (rt_type_str == "Freedman" || rt_type_str == "FR") {
+        rt_type = FREEDMAN;
+        config_OK &= true;
+    }
+    else {
+        log::printf("rt_type config item not recognised: [%s]\n", rt_type_str.c_str());
+        config_OK &= false;
+    }
+
+    // if (!config_OK) {
+    //     log::printf("Error in configuration file\n");
+    //     exit(-1);
+    // }
 
     conv_adj_types conv_adj_type = HOURDIN;
 
@@ -1102,6 +1136,7 @@ int main(int argc, char** argv) {
           sim.out_interm_momentum,
           sim.output_diffusion,
           sim.DiffSponge,
+          rt_type,
           init_PT_profile,
           Tint,
           kappa_lw,
