@@ -424,6 +424,7 @@ public:
         bool                  out_interm_momentum,
         bool                  output_diffusion,
         bool                  DiffSponge,
+        radiative_transfer_types rt_type_,
         init_PT_profile_types init_PT_profile_,
         double                Tint_,
         double                kappa_lw_,
@@ -638,6 +639,7 @@ private:
     // store if we run benchmarks
     benchmark_types core_benchmark;
 
+    radiative_transfer_types rt_type;
     init_PT_profile_types init_PT_profile;
 
     uh_thermo_types  ultrahot_thermo;
