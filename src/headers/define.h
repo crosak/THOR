@@ -116,6 +116,7 @@
 
 #define globdiag_default false //output energy, mass, angular momentum, etc
 
+// Convective adjustment scheme
 #define conv_adj_default false // use convective adjustment scheme
 // number of times to execute per time step
 // (repeats entire algorithm if > 1)
@@ -125,6 +126,8 @@
 // true = soft adjustment: calculate tendencies due to convection, forward to dyn core
 // false = hard adjustment: force profiles to neutral during profx step
 
+// Radiative transfer options
+#define rt_type_default "DualbandGray"
 #define init_PT_profile_default "isothermal"
 #define kappa_lw_default 0.002 // m^2 kg^-1
 #define kappa_sw_default 0.001 // m^2 kg^-1
@@ -138,6 +141,7 @@
 
 #define thermo_equation_default "entropy"
 
+// Non-uniform vertical grid options
 #define vert_refined_default false
 
 #define transition_altitude_default 1000.0
@@ -160,7 +164,9 @@ enum benchmark_types {
 };
 
 
-enum init_PT_profile_types { ISOTHERMAL = 0, GUILLOT = 1, CONSTBV = 2, PARMENTIER = 3 };
+enum init_PT_profile_types { ISOTHERMAL = 0, GUILLOT = 1, CONSTBV = 2, PARMENTIER = 3, BDISOTHERMAL = 4 };
+
+enum radiative_transfer_types { DUALBANDGRAY = 0, PICKETFENCE = 1, FREEDMAN = 2 };
 
 enum uh_thermo_types { NO_UH_THERMO = 0, VARY_R_CP = 1, FULL = 2 };
 
