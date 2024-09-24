@@ -22,7 +22,9 @@
 // Description: Physics modules.
 //
 //
-// Method: This version just includes the held-suarez test.
+// Method: This version just includes sponge layers for wind velocities and temperatures,
+//         multiple convective adjustment options, thermal perturbations at the RCB
+//         and external physics modules (insolation, RT, chemistry, etc.).
 //
 // Known limitations: None
 //
@@ -46,6 +48,7 @@
 
 #include "esp.h"
 #include "phy/dry_conv_adj.h"
+#include "phy/thermal_perturb.h"
 #include "phy/profx_acoustic_test.h"
 #include "phy/profx_auxiliary.h"
 #include "phy/profx_deepHJ.h"
@@ -293,11 +296,62 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
                   (),
                   ("Rho_d", "pressure_d", "Mh_d", "Wh_d", "temperature_d", "W_d"))
 
+    if (sim.thermal_perturb) {
+
+        bool first_call;
+        if (current_step == 1){
+            first_call = true;
+        }else{
+            first_call = false;
+        }
+        cudaDeviceSynchronize();
+        thermal_perturb<<<NBRT, NTH>>>(pressure_d,    // Pressure [Pa]
+                                       pressureh_d,   // mid-point pressure [Pa]
+                                       temperature_d, // Temperature [K]
+                                       profx_Qheat_d,
+                                       pt_d,          // Pot temperature [K]
+                                       Rho_d,         // Density [m^3/kg]
+                                       Cp_d,          // Specific heat capacity [J/kg/K]
+                                       Rd_d,          // Gas constant [J/kg/K]
+                                       sim.Gravit,    // Gravity [m/s^2]
+                                       Altitude_d,    // Altitudes of the layers
+                                       Altitudeh_d,   // Altitudes of the interfaces
+                                       lonlat_d,
+                                       timestep,      // time step [s]
+                                       sim.A,
+                                       // thermal_perturb working variables 
+                                       thermpert_d,
+                                       bforce_d,
+                                       bturb_d,
+                                       PM_d,
+                                       // thermal_perturb parameters
+                                       sim.mforce,         // Order of the assoc. Legendre functions
+                                       sim.nforce,         // Degree of the assoc. Legendre functions
+                                       sim.delta_n,            
+                                       sim.mmax,            
+                                       sim.nmax,             
+                                       sim.nrforctop,      // Number of forcing top layers
+                                       sim.t_storm,        // Storm timescale [s]
+                                       sim.t_amp,          // Forcing amplitude [?]
+                                       sim.p_rcb,          // Pressure of the radiative-convective boundary [Pa]
+                                       sim.nburn,          // Number of burn-in iterations
+                                       state_d,
+                                       first_call,
+                                       sim.soft_adjustment,
+                                       sim.GravHeightVar,
+                                       point_num,      // Number of columns
+                                       nv);            // number of vertical layers
+    }
+
+    BENCH_POINT_I(current_step,
+                    "thermal_perturb",
+                    (),
+                    ("Rho_d", "pressure_d", "Mh_d", "Wh_d", "temperature_d", "W_d"))
+
 
     ///////////////////////
-    // HELD SUAREZ TEST  //
-    ///////////////////////
-    //
+    // CORE BENCHMARKS   //
+    //////////////////weradsfasdfasdfasasdfasdfasqq
     if (core_benchmark == HELD_SUAREZ) {
         cudaDeviceSynchronize();
         held_suarez<<<NB, NTH>>>(Mh_d,
