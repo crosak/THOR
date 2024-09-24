@@ -386,6 +386,19 @@ int main(int argc, char** argv) {
     config_reader.append_config_var(
         "conv_adj_type", conv_adj_type_str, string(conv_adj_type_default));
     
+    // Thermal perturbation options
+    config_reader.append_config_var("thermal_perturb", sim.thermal_perturb, thermal_perturb_default);
+    config_reader.append_config_var("mforce", sim.mforce, mforce_default);
+    config_reader.append_config_var("nforce", sim.nforce, nforce_default);
+    config_reader.append_config_var("delta_n", sim.delta_n, delta_n_default);
+    config_reader.append_config_var("mmax", sim.mmax, mmax_default);
+    config_reader.append_config_var("nmax", sim.nmax, nmax_default);
+    config_reader.append_config_var("nrforctop", sim.nrforctop, nrforctop_default);
+    config_reader.append_config_var("t_storm", sim.t_storm, t_storm_default);
+    config_reader.append_config_var("t_amp", sim.t_amp, t_amp_default);
+    config_reader.append_config_var("p_rcb", sim.p_rcb, p_rcb_default);
+    config_reader.append_config_var("nburn", sim.nburn, nburn_default);
+
     // Output options
     int GPU_ID_N = 0;
     config_reader.append_config_var("GPU_ID_N", GPU_ID_N, GPU_ID_N_default);
@@ -1251,6 +1264,8 @@ int main(int argc, char** argv) {
     log::printf("   Deep Model       =  %s.\n", sim.DeepModel ? "true" : "false");
     log::printf("   Convective adj.  =  %s.\n", sim.conv_adj ? "true" : "false");
     log::printf("   Conv adj type    =  %s.\n", conv_adj_type_str.c_str());
+    log::printf("   Thermal perturb  =  %s.\n", sim.thermal_perturb ? "true" : "false");
+
 
     log::printf("   ********** \n");
     log::printf("   Numerical diffusion\n");
