@@ -1957,11 +1957,14 @@ __device__ void ts_short_char_freedman(int       id,
 
         //printf("tau_struct finished\n");
 
-
-        sw_grey_down(id, nlev, Finc, tau_Ve__df_e, sw_down_b__df_e, mu_s);
+        // Calculate the short-wave flux in the downwards direction using the characteristic functions
+        // sw_grey_down(id, nlev, Finc, tau_Ve__df_e, sw_down_b__df_e, mu_s);
+        
 
         // Sum all bands
         for (int i = 0; i < nlev; i++) {
+            // Set the downwards flux directly to zero instead of going through the calculation
+            sw_down_b__df_e[id * nlev + i] = 0.0;
             sw_down__df_e[id * nlev + i] = sw_down_b__df_e[id * nlev + i];
         }
 
