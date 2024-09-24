@@ -99,15 +99,31 @@ public:
     bool RayleighSpongeT; // include thermal term in sponge layer?
     bool DiffSponge;      // Diffusive sponge
 
+    // output switches
     bool output_mean; //whether or not to output time mean quantities
     bool
          out_interm_momentum; //output intermediate momentum values (start of time step & after profx)
     bool output_diffusion;    //output hyperdiffusion operators, etc
 
+    // convective adjustment switches
     bool conv_adj;
     int  conv_adj_iter;
     bool soft_adjustment;
 
+    // thermal perturbations switch (Intended only for Brown Dwarfs!)
+    bool thermal_perturb;
+    int mforce;
+    int nforce;
+    int delta_n;
+    int mmax;
+    int nmax;
+    int nrforctop;
+    double t_storm;
+    double t_amp;
+    double p_rcb;
+    int nburn;
+
+    // Debugging tools
     bool gcm_off;
     bool single_column;
 

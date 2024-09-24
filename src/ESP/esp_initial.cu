@@ -59,6 +59,7 @@
 
 #include <map>
 #include <stdio.h>
+#include <curand_kernel.h>
 
 // physical modules
 #include "phy_modules.h"
@@ -273,6 +274,15 @@ __host__ void ESP::alloc_data(bool globdiag,
     boundary_flux_h = (double *)malloc(6 * nv * point_num * sizeof(double));
     cudaMalloc((void **)&boundary_flux_d, 6 * point_num * nv * sizeof(double));
 
+    // thermal perturbations (review this! they're mostly likely not needed.)
+    int nmax = 40;
+    int mmax = 40;
+    // thermpert_h = (double *)malloc(nv * point_num * sizeof(double));
+    // bforce_h = (double *)malloc(nv * point_num * sizeof(double));
+    // bturb_h = (double *)malloc(nv * point_num * sizeof(double));
+    // PM_h = (double *)malloc(point_num * (mmax + 1) * (nmax + 1) * sizeof(double));
+    // state_h = (curandState *)malloc(nv * point_num * sizeof(curandState));
+
     // inititial conditions parmentier
     if (init_PT_profile == PARMENTIER) {
         init_altitude_parmentier    = (double *)malloc(1000 * sizeof(double));
@@ -338,6 +348,13 @@ __host__ void ESP::alloc_data(bool globdiag,
     cudaMalloc((void **)&Rd_d, nv * point_num * sizeof(double));
     cudaMalloc((void **)&Cp_d, nv * point_num * sizeof(double));
 
+    // thermal perturbations
+    cudaMalloc((void **)&thermpert_d, nv * point_num * sizeof(double));
+    cudaMalloc((void **)&bforce_d, nv * point_num * sizeof(double));
+    cudaMalloc((void **)&bturb_d, nv * point_num * sizeof(double));
+    cudaMalloc((void **)&PM_d, point_num * (mmax + 1) * (nmax + 1) * sizeof(double));
+    cudaMalloc((void **)&state_d, nv * point_num * sizeof(curandState));
+
     //  Temperature
     cudaMalloc((void **)&temperature_d, nv * point_num * sizeof(double));
 
@@ -352,7 +369,7 @@ __host__ void ESP::alloc_data(bool globdiag,
     cudaMalloc((void **)&ekinetich_d, nvi * point_num * sizeof(double));
     cudaMalloc((void **)&Etotal_tau_d, nv * point_num * sizeof(double));
 
-    //  Entalphy
+    //  Enthalphy
     cudaMalloc((void **)&h_d, nv * point_num * sizeof(double));
     cudaMalloc((void **)&hh_d, nvi * point_num * sizeof(double));
 
@@ -1384,11 +1401,19 @@ __host__ bool ESP::initial_values(const std::string &initial_conditions_filename
                    zonal_mean_tab_h,
                    3 * point_num * sizeof(int),
                    cudaMemcpyHostToDevice);
-
+    
+    // ultra-hot thermo
     cudaMemcpy(Rd_d, Rd_h, point_num * nv * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(Cp_d, Cp_h, point_num * nv * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(GibbsT_d, GibbsT, GibbsN * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(GibbsdG_d, GibbsdG, GibbsN * sizeof(double), cudaMemcpyHostToDevice);
+    
+    // thermal perturb
+    // cudaMemcpy(thermpert_d, thermpert_h, point_num * nv * sizeof(double), cudaMemcpyHostToDevice);
+    // cudaMemcpy(bforce_d, bforce_h, point_num * nv * sizeof(double), cudaMemcpyHostToDevice);
+    // cudaMemcpy(bturb_d, bturb_h, point_num * nv * sizeof(double), cudaMemcpyHostToDevice);
+    // cudaMemcpy(PM_d, PM_h, point_num * (sim.mmax + 1) * (sim.nmax + 1) * sizeof(double), cudaMemcpyHostToDevice);
+    // cudaMemcpy(state_d, state_h, nv * point_num * sizeof(curandState), cudaMemcpyHostToDevice);
 
     if (surface) {
         cudaMemcpy(Tsurface_d, Tsurface_h, point_num * sizeof(double), cudaMemcpyHostToDevice);
@@ -1662,6 +1687,18 @@ __host__ ESP::~ESP() {
 
     cudaFree(GibbsT_d);
     cudaFree(GibbsdG_d);
+
+    // thermal perturbations
+    // free(thermpert_h);
+    // free(bforce_h);
+    // free(bturb_h);
+    // free(PM_h);
+    // free(state_h);
+    cudaFree(thermpert_d);
+    cudaFree(bforce_d);
+    cudaFree(bturb_d);
+    cudaFree(PM_d);
+    cudaFree(state_d);
 
     cudaFree(boundary_flux_d);
     free(boundary_flux_h);

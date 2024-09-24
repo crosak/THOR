@@ -254,6 +254,9 @@ __host__ void ESP::output(int                    fidx, // Index of output file
         //      conv adj option
         s.append_value(sim.conv_adj ? 1.0 : 0.0, "/conv_adj", "-", "Using convection adjustment");
 
+        //      thermal perturbation option
+        s.append_value(sim.thermal_perturb ? 1.0 : 0.0, "/thermal_perturb", "-", "Using thermal perturbations at the RCB");
+
         //      GCM on/off option
         s.append_value(sim.gcm_off ? 1.0 : 0.0, "/gcm_off", "-", "GCM off");
 

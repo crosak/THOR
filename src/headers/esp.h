@@ -48,6 +48,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <curand_kernel.h>
 
 #include "debug.h"
 #include <string>
@@ -196,6 +197,13 @@ public:
     double *GibbsT;
     double *GibbsdG;
     int     GibbsN = 61;
+
+    // thermal perturbation working variables
+    // double* thermpert_h;
+    // double* bforce_h;
+    // double* bturb_h;
+    // double* PM_h;
+    // curandState* state_h;
 
     // physics module Qheat, for output
     double *profx_Qheat_h;
@@ -369,6 +377,13 @@ public:
     double *Cp_d; //local value of heat capacity
     double *GibbsT_d;
     double *GibbsdG_d;
+
+    // thermal perturbation working variables
+    double* thermpert_d;
+    double* bforce_d;
+    double* bturb_d;
+    double* PM_d;
+    curandState* state_d;
 
     ///////////////////////////
     // insolation computation helper class

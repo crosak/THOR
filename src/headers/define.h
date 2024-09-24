@@ -152,6 +152,19 @@
 #define a_dense_default 1.0
 #define b_dense_default 6.0
 
+// Thermal perturbations at the RCB
+#define thermal_perturb_default false
+#define mforce_default 10
+#define nforce_default 29
+#define delta_n_default 2
+#define mmax_default 40
+#define nmax_default 40
+#define nrforctop_default 40
+#define t_storm_default 1e5
+#define t_amp_default 1.5e-4
+#define p_rcb_default 1e6
+#define nburn_default 100
+
 enum benchmark_types {
     NO_BENCHMARK         = 0,
     HELD_SUAREZ          = 1,
