@@ -327,6 +327,31 @@ __host__ void ESP::alloc_data(bool globdiag,
     if (ray_dry_conv_adj == true) {
         cudaMalloc((void **)&dT_conv_d, nv * point_num * sizeof(double));
     }
+    
+    // mixing length theory option
+    if (conv_adj_type == MIXING_LENGTH) {
+        // Eddy diffusion coefficient
+        Kzz_h = (double *)malloc(nv * point_num * sizeof(double));
+        cudaMalloc((void **)&Kzz_d, nv * point_num * sizeof(double));
+        
+        // Working variables for the MLT routine on the device side // 
+        // Temperature at the interfaces [K]
+        cudaMalloc((void **)&temperatureh_d, nvi * point_num * sizeof(double));
+        // Vertical thermal convective flux [W/m^2]
+        cudaMalloc((void **)&F_conv_d, nv * point_num * sizeof(double));
+        cudaMalloc((void **)&F_convh_d, nvi * point_num * sizeof(double));
+        // Vertical gradient of the thermal convective flux [W/m^3]
+        cudaMalloc((void **)&dFdz_d, nv * point_num * sizeof(double));
+        // Temperature tendency due to MLT [K/s]
+        cudaMalloc((void **)&dTempdt_mlt_d, nv * point_num * sizeof(double)); 
+        // Lapse rate [K/m]
+        cudaMalloc((void **)&lapse_rate_d, nv * point_num * sizeof(double));
+        // Interpolation variables
+        // cudaMalloc((void **)&xp_column_d, nv * sizeof(double));
+        cudaMalloc((void **)&fp_column_d, nv * point_num * sizeof(double));
+        // Temporary storage array for calculations
+        cudaMalloc((void **)&tempcolumn_d, nv * point_num * sizeof(double));
+    }
 
     if (output_mean == true) {
         // Average quantities over output interval
@@ -1719,6 +1744,19 @@ __host__ ESP::~ESP() {
     bool ray_dry_conv_adj = true;
     if (ray_dry_conv_adj == true) {
         cudaFree(dT_conv_d);
+    }
+
+    if (conv_adj_type == MIXING_LENGTH) {
+        free(Kzz_h);
+        cudaFree(Kzz_d);
+        cudaFree(temperatureh_d);
+        cudaFree(F_conv_d);
+        cudaFree(F_convh_d);
+        cudaFree(dFdz_d);
+        cudaFree(dTempdt_mlt_d);
+        cudaFree(lapse_rate_d);
+        cudaFree(fp_column_d);
+        cudaFree(tempcolumn_d);
     }
 
     if (phy_modules_execute)
