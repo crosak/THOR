@@ -48,6 +48,7 @@
 
 #include "esp.h"
 #include "phy/dry_conv_adj.h"
+#include "phy/mlt_adj.h"
 #include "phy/thermal_perturb.h"
 #include "phy/profx_acoustic_test.h"
 #include "phy/profx_auxiliary.h"
@@ -248,7 +249,6 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
 
         if (conv_adj_type == RAYPH) {
 
-
             ray_dry_conv_adj<<<NBRT, NTH>>>(pressure_d,  // Pressure [Pa]
                                             pressureh_d, // mid-point pressure [Pa]
                                             dT_conv_d,
@@ -267,7 +267,7 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
                                             point_num, // Number of columns
                                             nv);       // number of vertical layers
         }
-        else {
+        else if(conv_adj_type == HOURDIN){
 
             dry_conv_adj<<<NBRT, NTH>>>(pressure_d, // Pressure [Pa]
                                         pressureh_d,
@@ -287,6 +287,39 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
                                         point_num, // Number of columns
                                         nv,
                                         sim.GravHeightVar); // number of vertical layers
+        }
+        else if (conv_adj_type == MIXING_LENGTH){
+            
+            mixing_length_adj<<<NBRT, NTH>>>(pressure_d, // Pressure [Pa]
+                                             pressureh_d,
+                                             temperature_d, // Temperature [K]
+                                             temperatureh_d,
+                                             profx_Qheat_d,
+                                             pt_d,          // Pot. temperature [K]
+                                             Rho_d,         // Density [m^3/kg]
+                                             Cp_d,          // Specific heat capacity [J/kg/K]
+                                             Rd_d,          // Gas constant [J/kg/K]
+                                             sim.Gravit,    // Gravity [m/s^2]
+                                             Altitude_d,    // Altitudes of the layers
+                                             Altitudeh_d,   // Altitudes of the interfaces
+                                             Kzz_d,         // Eddy diffusion coefficient
+                                             F_conv_d,      // Vertical thermal convective flux [W/m^2]
+                                             F_convh_d,     // Vertical thermal convective flux at interfaces [W/m^2]
+                                             dFdz_d,        // Vertical gradient of the thermal convective flux [W/m^3]
+                                             dTempdt_mlt_d, // Temperature tendency due to MLT [K/s]    
+                                             lapse_rate_d,  // Lapse rate [K/m]
+                                             fp_column_d, 
+                                             tempcolumn_d, 
+                                             timestep,
+                                             sim.A,
+                                             sim.soft_adjustment,
+                                             point_num, // Number of columns
+                                             nv,
+                                             sim.GravHeightVar);
+            // cuda_check_status_or_exit(__FILE__, __LINE__);
+        }
+        else{
+            // Throw an error
         }
         // }
     }
@@ -351,7 +384,7 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
 
     ///////////////////////
     // CORE BENCHMARKS   //
-    //////////////////weradsfasdfasdfasasdfasdfasqq
+    ///////////////////////
     if (core_benchmark == HELD_SUAREZ) {
         cudaDeviceSynchronize();
         held_suarez<<<NB, NTH>>>(Mh_d,
