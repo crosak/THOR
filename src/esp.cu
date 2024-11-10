@@ -385,7 +385,7 @@ int main(int argc, char** argv) {
     string conv_adj_type_str("hourdin");
     config_reader.append_config_var(
         "conv_adj_type", conv_adj_type_str, string(conv_adj_type_default));
-    
+        
     // Thermal perturbation options
     config_reader.append_config_var("thermal_perturb", sim.thermal_perturb, thermal_perturb_default);
     config_reader.append_config_var("mforce", sim.mforce, mforce_default);
@@ -703,6 +703,7 @@ int main(int argc, char** argv) {
 
     // Check rt_type string
     radiative_transfer_types rt_type = DUALBANDGRAY;
+    // printf("%s (esp.cu)", rt_type_str.c_str());
     if (rt_type_str == "DualbandGray" || rt_type_str == "DualbandGrey" || rt_type_str == "DG") {
         rt_type = DUALBANDGRAY;
         config_OK &= true;
@@ -712,6 +713,7 @@ int main(int argc, char** argv) {
         config_OK &= true;
     }
     else if (rt_type_str == "Freedman" || rt_type_str == "FR") {
+        // printf("Assignment successful!"); 
         rt_type = FREEDMAN;
         config_OK &= true;
     }
@@ -726,13 +728,17 @@ int main(int argc, char** argv) {
     // }
 
     conv_adj_types conv_adj_type = HOURDIN;
-
+    // printf("%s (esp.cu)", conv_adj_type_str.c_str());
     if (conv_adj_type_str == "hourdin" || conv_adj_type_str == "Hourdin") {
         conv_adj_type = HOURDIN;
         config_OK &= true;
     }
     else if (conv_adj_type_str == "rayph" || conv_adj_type_str == "RayPH") {
         conv_adj_type = RAYPH;
+        config_OK &= true;
+    }
+    else if (conv_adj_type_str == "mixing_length" || conv_adj_type_str == "MLT") {
+        conv_adj_type = MIXING_LENGTH;
         config_OK &= true;
     }
     else {
