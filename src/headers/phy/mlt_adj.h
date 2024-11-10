@@ -44,7 +44,197 @@
 //
 ////////////////////////////////////////////////////////////////////////
 
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
 #include <math.h>
+
+
+__device__ int binary_search(const double* a, double x, int n)
+{
+    int left = 0;
+    int right = n - 1;
+    int mid;
+    while (left <= right)
+    {
+        mid = (left + right) / 2;
+        if (x < a[mid])
+        {
+            right = mid - 1;
+        }
+        else
+        {
+            left = mid + 1;
+        }
+    }
+    int index = max(0, right);
+    return index;
+}
+
+__device__ void weno4_q(double x, double xim, double xi, double xip, double xipp, double yim, double yi, double yip, double yipp, double *q2, double *q3)
+{
+    double him = xi - xim;
+    double hi = xip - xi;
+    double hip = xipp - xip;
+
+    *q2 = yim * ((x - xi) * (x - xip)) / (him * (him + hi));
+    *q2 -= yi * ((x - xim) * (x - xip)) / (him * hi);
+    *q2 += yip * ((x - xim) * (x - xi)) / ((him + hi) * hi);
+
+    *q3 = yi * ((x - xip) * (x - xipp)) / (hi * (hi + hip));
+    *q3 -= yip * ((x - xi) * (x - xipp)) / (hi * hip);
+    *q3 += yipp * ((x - xi) * (x - xip)) / ((hi + hip) * hip);
+}
+
+__device__ void weno4_B(double xim, double xi, double xip, double xipp, double yim, double yi, double yip, double yipp, double *B2, double *B3)
+{
+    double him = xi - xim;
+    double hi = xip - xi;
+    double hip = xipp - xip;
+    double H = him + hi + hip;
+    double yyim, yyi, yyip, yyipp;
+
+    yyim = -((2.0 * him + hi) * H + him * (him + hi)) / (him * (him + hi) * H) * yim;
+    yyim += ((him + hi) * H) / (him * hi * (hi + hip)) * yi;
+    yyim -= (him * H) / ((him + hi) * hi * hip) * yip;
+    yyim += (him * (him + hi)) / ((hi + hip) * hip * H) * yipp;
+
+    yyi = -(hi * (hi + hip)) / (him * (him + hi) * H) * yim;
+    yyi += (hi * (hi + hip) - him * (2.0 * hi + hip)) / (him * hi * (hi + hip)) * yi;
+    yyi += (him * (hi + hip)) / ((him + hi) * hi * hip) * yip;
+    yyi -= (him * hi) / ((hi + hip) * hip * H) * yipp;
+
+    yyip = (hi * hip) / (him * (him + hi) * H) * yim;
+    yyip -= (hip * (him + hi)) / (him * hi * (hi + hip)) * yi;
+    yyip += ((him + 2.0 * hi) * hip - (him + hi) * hi) / ((him + hi) * hi * hip) * yip;
+    yyip += ((him + hi) * hi) / ((hi + hip) * hip * H) * yipp;
+
+    yyipp = -((hi + hip) * hip) / (him * (him + hi) * H) * yim;
+    yyipp += (hip * H) / (him * hi * (hi + hip)) * yi;
+    yyipp -= ((hi + hip) * H) / ((him + hi) * hi * hip) * yip;
+    yyipp += ((2.0 * hip + hi) * H + hip * (hi + hip)) / ((hi + hip) * hip * H) * yipp;
+
+    *B2 = pow((hi + hip), 2) * pow(fabs((yyip - yyi) / hi - (yyi - yyim) / him), 2);
+    *B3 = pow((him + hi), 2) * pow(fabs((yyipp - yyip) / hip - (yyip - yyi) / hi), 2);
+}
+
+__device__ double compute_weno4(int id, double x, const double* xp, const double* fp, int i, int Ngrid, double eps, double* B2, double* B3, int* prevB)
+{
+    double y;
+    double xim, xi, xip, xipp, yim, yi, yip, yipp;
+    double q2, q3, gam2, gam3, al2, al3, om2, om3;
+
+    xi = xp[i];
+    xip = xp[i + 1];
+    yi = fp[id * Ngrid + i];
+    yip = fp[id * Ngrid + i + 1];
+
+    // Handle edge cases as per the original Fortran code
+    if (i == 0)
+    {
+        xim = 0.0;           // Set xim to zero for the lower boundary
+        xipp = xp[i + 2];
+        yim = 0.0;           // Set yim to zero for the lower boundary
+        yipp = fp[id * Ngrid + i + 2];
+    }
+    else if (i == Ngrid - 2)
+    {
+        xim = xp[i - 1];
+        xipp = 0.0;          // Set xipp to zero for the upper boundary
+        yim = fp[id * Ngrid + i - 1];
+        yipp = 0.0;          // Set yipp to zero for the upper boundary
+    }
+    else
+    {
+        xim = xp[i - 1];
+        xipp = xp[i + 2];
+        yim = fp[id * Ngrid + i - 1];
+        yipp = fp[id * Ngrid + i + 2];
+    }
+
+    // Compute q2 and q3 using the weno4_q function
+    weno4_q(x, xim, xi, xip, xipp, yim, yi, yip, yipp, &q2, &q3);
+
+    // Determine the interpolated value based on the position
+    if (i == 0)
+    {
+        y = q3;  // Use q3 at the lower boundary
+    }
+    else if (i == Ngrid - 2)
+    {
+        y = q2;  // Use q2 at the upper boundary
+    }
+    else
+    {
+        // Recompute B2 and B3 only when i changes
+        if (i != *prevB)
+        {
+            weno4_B(xim, xi, xip, xipp, yim, yi, yip, yipp, B2, B3);
+            *prevB = i;
+        }
+
+        // Compute the weights
+        gam2 = -(x - xipp) / (xipp - xim);
+        gam3 = (x - xim) / (xipp - xim);
+
+        al2 = gam2 / (eps + *B2);
+        al3 = gam3 / (eps + *B3);
+
+        om2 = al2 / (al2 + al3);
+        om3 = al3 / (al2 + al3);
+
+        // Compute the final interpolated value
+        y = om2 * q2 + om3 * q3;
+    }
+
+    return y;
+}
+
+__device__ void interpolate_weno4_kernel(double* xs, const double* xp, const double* fp_column, double* result, const int nv, int num, bool use_extrapolate)
+{
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (id < num) {  
+
+        int Ngrid = nv;
+
+        double eps = 1.0e-6;
+        double B2 = 0.0, B3 = 0.0;
+        int prevB = -1;
+
+        int i;
+        
+        for (int lev = 0; lev < nv + 1; lev++) {  
+            
+            double x = xs[lev];
+            // Bottom edge
+            if (x < xp[0]) {
+                if (!use_extrapolate) {
+                    result[id * (nv + 1) + lev] = fp_column[id * nv + 0];  
+                    continue;  
+                }
+                i = 0;
+
+            // Top edge
+            } else if (x > xp[Ngrid - 1]) {
+                if (!use_extrapolate) {
+                    result[id * (nv + 1) + lev] = fp_column[id * nv + Ngrid - 1];  
+                    continue;  
+                }
+                i = Ngrid - 3;
+            } else {
+                // Normal cells in between
+                i = binary_search(xp, x, Ngrid);
+            }
+
+            if (i >= Ngrid - 2) { 
+                i = Ngrid - 3;
+            }
+
+            result[id * (nv + 1) + lev] = compute_weno4(
+                id, x, xp, fp_column, i, Ngrid, eps, &B2, &B3, &prevB);
+        }
+    }
+}
 
 
 __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell centers) [Pa]
@@ -77,18 +267,18 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
     //
     //  Description: 
     //
-        // Calculate kappa_ad = Rd_d / Cp_d 
+    // Calculate kappa_ad = Rd_d / Cp_d 
     // Calculate gamma_ad = Gravit/Cp_d
     // Interpolate the temperature to the interfaces to calculate the lapse rate over the extent of the cell
     // Calculate gamma = - dT/dz (lapse rate)
-        // Calculate the scale height and declare a variable alpha that is ad-hoc, set the default value according to Lee+2023
-        // Calculate vertical velocity w 
-        // Sweep through the atmosphere and trigger an if statement for convective instability
+    // Calculate the scale height and declare a variable alpha that is ad-hoc, set the default value according to Lee+2023
+    // Calculate vertical velocity w 
+    // Sweep through the atmosphere and trigger an if statement for convective instability
     // Calculate the convective heat flux F_conv = 0.5 * rho * Cp_d * w  * L * (T * gamma - gamma_ad)
     // Interpolate the convective heat flux to the interfaces to calculate the lapse rate over the extent of the cell
     // Calculate the flux derivative across the unstable cells (dF_conv/dz)
-        // Calculate the temperature gradient (dT/dt)_mlt = -1/(Cp_d *rho) * (dF_conv/dz)
-        // Use the calculated temperature gradient to update the temperature by Tempreature_d = Temperature_d + (dT/dt)_mlt * time_step_mlt
+    // Calculate the temperature gradient (dT/dt)_mlt = -1/(Cp_d *rho) * (dF_conv/dz)
+    // Use the calculated temperature gradient to update the temperature by Tempreature_d = Temperature_d + (dT/dt)_mlt * time_step_mlt
     // Repeat until we reach big time step
 
     int id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -179,7 +369,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                     
                 }
             }
-
+            
             // Compute Potential Temperature (Necessary for the stability check)
             for (int lev = 0; lev < nv; lev++) {
                 pt_d[id * nv + lev] = tempcolumn_d[id * nv + lev]
@@ -224,10 +414,10 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                 if (pt_d[id * nv + lev + 1] - pt_d[id * nv + lev] < stable) {
                     if (lev < nv - 1) {
                         double gamma_ad = Gravit / Cp_d[id * nv + lev];   // Adiabatic lapse rate
-                    // Calculate the characteristic vertical velocity
+                        // Calculate the characteristic vertical velocity
                         w_mlt_d = L_d * sqrt(Gravit/tempcolumn_d[id * nv + lev] * (lapse_rate_d[id * nv + lev] - gamma_ad));
 
-                    // Calculate the convective heat flux
+                        // Calculate the convective heat flux
                         F_conv_d[id * nv + lev] = 0.5 * Rho_d[id * nv + lev] * Cp_d[id * nv + lev] * w_mlt_d * L_d * (tempcolumn_d[id * nv + lev] * lapse_rate_d[id * nv + lev] - gamma_ad);
                     } else {
                         // Handle the top boundary (lev = nv - 1)
@@ -261,7 +451,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
 
             // Calculate the flux derivative (dF_conv/dz)
             for (int lev = 0; lev < nv; lev++) {
-                // Sweep upward and check for instability
+                 // Sweep upward and check for instability
                 if (pt_d[id * nv + lev + 1] - pt_d[id * nv + lev] < stable) {
                     if (lev < nv - 1) {
                         dFdz_d[id * nv + lev] = (F_convh_d[id * (nv + 1) + lev + 1] - F_convh_d[id * (nv + 1) + lev]) /
@@ -277,7 +467,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
 
             // Calculate the temperature tendency
             for (int lev = 0; lev < nv; lev++) {
-                        // Calculate the temperature gradient
+                // Calculate the temperature gradient
                 dTempdt_mlt_d[id * nv + lev] = -1/(Cp_d[id * nv + lev] * Rho_d[id * nv + lev]) * dFdz_d[id * nv + lev]; 
                 // Update the temperature in a sub-timestep approach using a smaller timestep than the dynamical timestep
                 tempcolumn_d[id * nv + lev] = tempcolumn_d[id * nv + lev] + dTempdt_mlt_d[id * nv + lev] * dt;
@@ -290,32 +480,32 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
             t_now += dt;
         }
         // Soft adjust the results by only modifying the Qheat term using the calculated temperature
-            if (soft_adjust) {
-                double Ttmp, Ptmp;
+        if (soft_adjust) {
+            double Ttmp, Ptmp;
             
-                for (int lev = 0; lev < nv; lev++) {
+            for (int lev = 0; lev < nv; lev++) {
                 Ttmp = tempcolumn_d[id * nv + lev];
-                    Ptmp = Ttmp * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
-                    //reset pt value to beginning of time step
-                    pt_d[id * nv + lev] = Temperature_d[id * nv + lev]
-                                          * pow(Pressure_d[id * nv + lev] / ps,
-                                                -Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
+                Ptmp = Ttmp * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
+                //reset pt value to beginning of time step
+                pt_d[id * nv + lev] = Temperature_d[id * nv + lev]
+                                        * pow(Pressure_d[id * nv + lev] / ps,
+                                            -Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
 
-                    profx_Qheat_d[id * nv + lev] +=
-                        (Cp_d[id * nv + lev] - Rd_d[id * nv + lev]) / Rd_d[id * nv + lev]
+                profx_Qheat_d[id * nv + lev] +=
+                    (Cp_d[id * nv + lev] - Rd_d[id * nv + lev]) / Rd_d[id * nv + lev]
                     * (Ptmp - Pressure_d[id * nv + lev]) / time_step;;
-                    //does not repeat
-                }
+                //does not repeat
             }
+        }
         // Hard adjust the pressure and the pot. temperature directly using the calculated temperature
-            else {
-                for (int lev = 0; lev < nv; lev++) {
+        else {
+            for (int lev = 0; lev < nv; lev++) {
                 Temperature_d[id * nv + lev] = tempcolumn_d[id * nv + lev];
-                    Pressure_d[id * nv + lev] = Temperature_d[id * nv + lev] * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
+                Pressure_d[id * nv + lev] = Temperature_d[id * nv + lev] * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
 
-                    pt_d[id * nv + lev] = Temperature_d[id * nv + lev]
-                                          * pow(Pressure_d[id * nv + lev] / ps,
-                                                -Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
+                pt_d[id * nv + lev] = Temperature_d[id * nv + lev]
+                                        * pow(Pressure_d[id * nv + lev] / ps,
+                                            -Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
             }
         }
 
