@@ -45,6 +45,7 @@
 #pragma once
 
 #include "phy_module_base.h"
+#include "define.h"
 
 // #define rt_type_default "DualbandGray"
 
