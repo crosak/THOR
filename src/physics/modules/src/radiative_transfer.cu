@@ -95,31 +95,27 @@ void radiative_transfer::print_config() {
 bool radiative_transfer::initialise_memory(const ESP &              esp,
                                            device_RK_array_manager &phy_modules_core_arrays) {
 
-    // double picket_fence_mod = false;
+    // Radiative Transfer Type allocation for this class 
+    // printf("%s (radiative_transfer.cu | Memory Allocation)", rt_type_str.c_str());
+    bool config_OK = true;
+    if (rt_type_str == "DualbandGray" || rt_type_str == "DualbandGrey" || rt_type_str == "DG") {
+        rt_type = DUALBANDGRAY;
+        config_OK &= true;
+    }
+    else if (rt_type_str == "PicketFence" || rt_type_str == "PF") {
+        rt_type = PICKETFENCE;
+        config_OK &= true;
+    }
+    else if (rt_type_str == "Freedman" || rt_type_str == "FR") {
+        // printf("Assignment successful!"); 
+        rt_type = FREEDMAN;
+        config_OK &= true;
+    }
+    else {
+        log::printf("rt_type config item not recognised: [%s]\n", rt_type_str.c_str());
+        config_OK &= false;
+    }
 
-    // bool config_OK = true;
-
-    // if (rt_type_str == "DualbandGray" || rt_type_str == "DualbandGrey" || rt_type_str == "DG") {
-    //     rt_type = DUALBANDGRAY;
-    //     config_OK &= true;
-    // }
-    // else if (rt_type_str == "PicketFence" || rt_type_str == "PF") {
-    //     rt_type = PICKETFENCE;
-    //     config_OK &= true;
-    // }
-    // else if (rt_type_str == "Freedman" || rt_type_str == "FR") {
-    //     rt_type = FREEDMAN;
-    //     config_OK &= true;
-    // }
-    // else {
-    //     log::printf("rt_type config item not recognised: [%s]\n", rt_type_str.c_str());
-    //     config_OK &= false;
-    // }
-
-    // if (!config_OK) {
-    //     log::printf("Error in configuration file\n");
-    //     exit(-1);
-    // }
 
     cudaMalloc((void **)&ASR_d, esp.point_num * sizeof(double));
     cudaMalloc((void **)&OLR_d, esp.point_num * sizeof(double));
@@ -557,7 +553,7 @@ bool radiative_transfer::initial_conditions(const ESP &            esp,
     }
 
     // double picket_fence_mod = false;
-
+    // printf("%s (radiative_transfer.cu)", rt_type_str.c_str());
     if (rt_type == PICKETFENCE) {
 
         RTSetup(esp.Tstar,
@@ -578,7 +574,6 @@ bool radiative_transfer::initial_conditions(const ESP &            esp,
                 sim.Tmean);
     }
     else if (rt_type == FREEDMAN) {
-
         RTSetup(esp.Tstar,
                 esp.planet_star_dist,
                 esp.radius_star,
@@ -1245,7 +1240,6 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
                 exit(-1);
             }
 
-
             rtm_freedman<<<NBRT, NTH>>>(esp.pressure_d,
                                         esp.pressureh_d,
                                         esp.temperature_d,
@@ -1318,7 +1312,6 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
                                         sim.DeepModel);
         }
         else {
-
             rtm_dual_band<<<NBRT, NTH>>>(esp.pressure_d,
                                          esp.Rho_d,
                                          esp.temperature_d,
@@ -1401,120 +1394,35 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
 }
 
 bool radiative_transfer::configure(config_file &config_reader) {
-    // double picket_fence_mod = false;
 
-    config_reader.append_config_var("rt_type", rt_type_str, string(rt_type_default)); //
+    // string rt_type_str("DualbandGray");
+    printf("Default: %s (radiative_transfer.cu)", rt_type_default);
+    config_reader.append_config_var("rt_type", rt_type_str, string(rt_type_default));
 
-    if (rt_type == PICKETFENCE) {
+    // basic star-planet properties
+    config_reader.append_config_var("diff_ang", diff_ang_config, diff_ang_config);
+    config_reader.append_config_var("albedo", albedo_config, albedo_config);
+    // config_reader.append_config_var("Tint", Tint_config, Tint_config);
+    
+    // options for latitude dependence in longwave opacity
+    config_reader.append_config_var("latf_lw", latf_lw_config, latf_lw_config);
+    config_reader.append_config_var(
+        "kappa_lw_pole", kappa_lw_pole_config, kappa_lw_pole_config);
 
-        //cuda_check_status_or_exit(__FILE__, __LINE__);
-
-        // basic star-planet properties
-        // config_reader.append_config_var("Tstar", Tstar_config, Tstar_config);
-        // config_reader.append_config_var(
-        //     "planet_star_dist", planet_star_dist_config, planet_star_dist_config);
-        // config_reader.append_config_var("radius_star", radius_star_config, radius_star_config);
-        //config_reader.append_config_var("diff_ang", diff_ang_config, diff_ang_config);
-        // config_reader.append_config_var("Tint", Tint_config, Tint_config);
-        config_reader.append_config_var("albedo", albedo_config, albedo_config);
-        // config_reader.append_config_var("tausw", tausw_config, tausw_config);
-        // config_reader.append_config_var("taulw", taulw_config, taulw_config);
-
-        // options for latitude dependence in longwave opacity
-        config_reader.append_config_var("latf_lw", latf_lw_config, latf_lw_config);
-        config_reader.append_config_var(
-            "kappa_lw_pole", kappa_lw_pole_config, kappa_lw_pole_config);
-
-
-        // config_reader.append_config_var("f_lw", f_lw_config, f_lw_config);
-
-
-        config_reader.append_config_var("rt1Dmode", rt1Dmode_config, rt1Dmode_config);
-
-        // spin up spin down
-        config_reader.append_config_var("dgrt_spinup_start", spinup_start_step, spinup_start_step);
-        config_reader.append_config_var("dgrt_spinup_stop", spinup_stop_step, spinup_stop_step);
-        config_reader.append_config_var(
-            "dgrt_spindown_start", spindown_start_step, spindown_start_step);
-        config_reader.append_config_var(
-            "dgrt_spindown_stop", spindown_stop_step, spindown_stop_step);
-
-        //cuda_check_status_or_exit(__FILE__, __LINE__);
-    }
-    else if (rt_type == FREEDMAN) {
-
-        //cuda_check_status_or_exit(__FILE__, __LINE__);
-
-        // basic star-planet properties
-        // config_reader.append_config_var("Tstar", Tstar_config, Tstar_config);
-        // config_reader.append_config_var(
-        //     "planet_star_dist", planet_star_dist_config, planet_star_dist_config);
-        // config_reader.append_config_var("radius_star", radius_star_config, radius_star_config);
-        //config_reader.append_config_var("diff_ang", diff_ang_config, diff_ang_config);
-        // config_reader.append_config_var("Tint", Tint_config, Tint_config);
-        config_reader.append_config_var("albedo", albedo_config, albedo_config);
-        // config_reader.append_config_var("tausw", tausw_config, tausw_config);
-        // config_reader.append_config_var("taulw", taulw_config, taulw_config);
-
-        // options for latitude dependence in longwave opacity
-        config_reader.append_config_var("latf_lw", latf_lw_config, latf_lw_config);
-        config_reader.append_config_var("kappa_lw_pole", kappa_lw_pole_config, kappa_lw_pole_config);
-
-        // config_reader.append_config_var("f_lw", f_lw_config, f_lw_config);
-
-
-        config_reader.append_config_var("rt1Dmode", rt1Dmode_config, rt1Dmode_config);
-
-        // spin up spin down
-        config_reader.append_config_var("dgrt_spinup_start", spinup_start_step, spinup_start_step);
-        config_reader.append_config_var("dgrt_spinup_stop", spinup_stop_step, spinup_stop_step);
-        config_reader.append_config_var(
-            "dgrt_spindown_start", spindown_start_step, spindown_start_step);
-        config_reader.append_config_var(
-            "dgrt_spindown_stop", spindown_stop_step, spindown_stop_step);
-
-        //cuda_check_status_or_exit(__FILE__, __LINE__);
-    }
-    else {
-        // basic star-planet properties
-        // config_reader.append_config_var("Tstar", Tstar_config, Tstar_config);
-        // config_reader.append_config_var(
-        //     "planet_star_dist", planet_star_dist_config, planet_star_dist_config);
-        // config_reader.append_config_var("radius_star", radius_star_config, radius_star_config);
-        config_reader.append_config_var("diff_ang", diff_ang_config, diff_ang_config);
-        // config_reader.append_config_var("Tint", Tint_config, Tint_config);
-        config_reader.append_config_var("albedo", albedo_config, albedo_config);
-        // config_reader.append_config_var("tausw", tausw_config, tausw_config);
-        // config_reader.append_config_var("taulw", taulw_config, taulw_config);
-
-        // options for latitude dependence in longwave opacity
-        config_reader.append_config_var("latf_lw", latf_lw_config, latf_lw_config);
-        config_reader.append_config_var(
-            "kappa_lw_pole", kappa_lw_pole_config, kappa_lw_pole_config);
-
-        config_reader.append_config_var("n_sw", n_sw_config, n_sw_config);
-        config_reader.append_config_var("n_lw", n_lw_config, n_lw_config);
-        // config_reader.append_config_var("f_lw", f_lw_config, f_lw_config);
-
-
-        config_reader.append_config_var("rt1Dmode", rt1Dmode_config, rt1Dmode_config);
-
-        // spin up spin down
-        config_reader.append_config_var("dgrt_spinup_start", spinup_start_step, spinup_start_step);
-        config_reader.append_config_var("dgrt_spinup_stop", spinup_stop_step, spinup_stop_step);
-        config_reader.append_config_var(
-            "dgrt_spindown_start", spindown_start_step, spindown_start_step);
-        config_reader.append_config_var(
-            "dgrt_spindown_stop", spindown_stop_step, spindown_stop_step);
-    }
-
+    config_reader.append_config_var("rt1Dmode", rt1Dmode_config, rt1Dmode_config);
 
     // spin up spin down
     config_reader.append_config_var("dgrt_spinup_start", spinup_start_step, spinup_start_step);
     config_reader.append_config_var("dgrt_spinup_stop", spinup_stop_step, spinup_stop_step);
     config_reader.append_config_var(
         "dgrt_spindown_start", spindown_start_step, spindown_start_step);
-    config_reader.append_config_var("dgrt_spindown_stop", spindown_stop_step, spindown_stop_step);
+    config_reader.append_config_var(
+        "dgrt_spindown_stop", spindown_stop_step, spindown_stop_step);
+
+    // Dual-band gray specific config variables 
+    config_reader.append_config_var("n_sw", n_sw_config, n_sw_config);
+    config_reader.append_config_var("n_lw", n_lw_config, n_lw_config);
+    // config_reader.append_config_var("f_lw", f_lw_config, f_lw_config);
 
     return true;
 }
