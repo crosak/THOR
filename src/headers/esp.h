@@ -379,11 +379,25 @@ public:
     double *GibbsdG_d;
 
     // thermal perturbation working variables
-    double* thermpert_d;
-    double* bforce_d;
-    double* bturb_d;
-    double* PM_d;
-    curandState* state_d;
+    double *thermpert_d;
+    double *bforce_d;
+    double *bturb_d;
+    double *PM_d;
+    curandState *state_d;
+
+    // mixing length theory variables
+    double *Kzz_h;
+    double *Kzz_d;
+    double *temperatureh_d;
+    double *F_conv_d;
+    double *F_convh_d;
+    double *dFdz_d;
+    double *dTempdt_mlt_d;
+    double *lapse_rate_d;
+    double *fp_column_d;
+    double *tempcolumn_d;
+
+    // simple cloud model variables
 
     ///////////////////////////
     // insolation computation helper class
