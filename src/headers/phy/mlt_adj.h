@@ -47,59 +47,91 @@
 #include <math.h>
 
 
-__global__ void mixing_length_adj(double *Pressure_d,  // Pressure [Pa]
-                                 double *Pressureh_d, // Mid-point pressure [Pa]
-                                 double *dT_conv_d,
-                                 double *Temperature_d, // Temperature [K]
+__global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell centers) [Pa]
+                                 double *Pressureh_d,    // Pressure at interfaces (cell edges) [Pa]
+                                 double *Temperature_d,  // Temperature (cell centers)[K]
+                                 double *Temperatureh_d, // Temperature at interfaces (cell edges) [K]
                                  double *profx_Qheat_d,
-                                 double *pt_d,          // Potential temperature [K]
-                                 double *Rho_d,         // Density [m^3/kg]
-                                 double *Cp_d,          // Specific heat capacity [J/kg/K]
-                                 double *Rd_d,          // Gas constant [J/kg/K]
-                                 double  Gravit,        // Gravity [m/s^2]
-                                 double *Altitude_d,    // Altitudes of the layers
-                                 double *Altitudeh_d,   // Altitudes of the interfaces
-                                 double  time_step,     // time step [s]
+                                 double *pt_d,           // Potential temperature [K]
+                                 double *Rho_d,          // Density [m^3/kg]
+                                 double *Cp_d,           // Specific heat capacity [J/kg/K]
+                                 double *Rd_d,           // Gas constant [J/kg/K]
+                                 double  Gravit,         // Gravity [m/s^2]
+                                 double *Altitude_d,     // Altitudes of the layers
+                                 double *Altitudeh_d,    // Altitudes of the interfaces
+                                 double *Kzz_d,          // Eddy diffusion coefficient
+                                 double *F_conv_d,       // Vertical thermal convective flux [W/m^2]
+                                 double *F_convh_d,      // Vertical thermal convective flux at interfaces [W/m^2]
+                                 double *dFdz_d,         // Vertical gradient of the thermal convective flux [W/m^3]
+                                 double *dTempdt_mlt_d,  // Temperature tendency due to MLT [K/s]    
+                                 double *lapse_rate_d,   // Lapse rate [K/m]   
+                                 double *fp_column_d,
+                                 double *tempcolumn_d,
+                                 double  time_step,      // time step [s]
+                                 double  A,
                                  bool    soft_adjust,
-                                 int     num, // Number of columns
-                                 int     nv)      // Vertical levels
-
+                                 int     num,            // Number of columns
+                                 int     nv,             // Vertical levels
+                                 bool    GravHeightVar)            
 {
     //
     //  Description: 
     //
-    // Keep the interpolation/extrapolation schemes of Russell+Pascal
         // Calculate kappa_ad = Rd_d / Cp_d 
-        // Calculate gamma = - dT/dz ``
+    // Calculate gamma_ad = Gravit/Cp_d
+    // Interpolate the temperature to the interfaces to calculate the lapse rate over the extent of the cell
+    // Calculate gamma = - dT/dz (lapse rate)
         // Calculate the scale height and declare a variable alpha that is ad-hoc, set the default value according to Lee+2023
         // Calculate vertical velocity w 
         // Sweep through the atmosphere and trigger an if statement for convective instability
-        // Calculate the convective heat flux F_conv = 0.5 * rho * Cp_d * w * Temperature_d * alpha * H * (gamma - gamma_ad)
-        // Calculate the flux derivative across the instability zone (dF_conv/dz)
+    // Calculate the convective heat flux F_conv = 0.5 * rho * Cp_d * w  * L * (T * gamma - gamma_ad)
+    // Interpolate the convective heat flux to the interfaces to calculate the lapse rate over the extent of the cell
+    // Calculate the flux derivative across the unstable cells (dF_conv/dz)
         // Calculate the temperature gradient (dT/dt)_mlt = -1/(Cp_d *rho) * (dF_conv/dz)
         // Use the calculated temperature gradient to update the temperature by Tempreature_d = Temperature_d + (dT/dt)_mlt * time_step_mlt
-        // Repeat until we reach big time step``
+    // Repeat until we reach big time step
 
     int id = blockIdx.x * blockDim.x + threadIdx.x;
 
+    // Interpolation variables
     double ps, psm;
     double pp, ptop;
-    double alpha=0.1; // MLT constant, set to 0.1 for now (Lee+23) 
-    double scale_height, w_mlt, L_mlt, F_conv;
-    double gamma_ad = Gravit/Cp_d; // Replaces the stability threshold
-    double mlt_timestep = 0.5; // Mixing Length Theory time-step in seconds
-    int  mlt_adj_iter = time_step / mlt_timestep; // number of iterations of entire algorithm allowed
-    double stable = 0.0; // stability threshold
-
     double xi, xip, xim, a, b;
+
+    // Constants and parameters
+    const double alpha = 1;             // MLT parameter, set to 1 for now (Lee+23) 
+    const double stable = 0.0;          // Stability threshold for potential temperature gradient
+    double w_mlt_d;                     // Convective velocity [m/s]
+    double scale_height_local_d;        // Scale height for the local conditions
+    double L_d;                         // Characteristic mixing length [m] 
+    double dTdz_d;                      // Vertical temperature gradient [K/m]            
+
+    // Separate time-stepping for the MLT routine
+    double t_now = 0.0;
+    double dt;
+    double mlt_timestep = 0.5;          // Mixing Length Theory time-step in seconds
 
     if (id < num) {
 
+        // Fill in the temporary array to be used in calculations
+        for (int lev = 0; lev <= nv; lev++) {
+            tempcolumn_d[id * nv + lev] = Temperature_d[id * nv + lev];
+        }
         int  iter   = 0;
-        bool repeat = true; //will repeat entire
-        while ((repeat == true) && (iter < mlt_adj_iter)) {
-            // for (iter = 0; iter < ITERMAX; iter++) {
-            // calculate pressure at the interfaces
+
+        while(t_now < time_step){
+
+            // Calculate the current timestep
+            if ((t_now + mlt_timestep >= time_step)){
+                dt = time_step - t_now;
+            }
+            else{
+                dt = mlt_timestep;
+            }
+            
+            // printf("id = %d, iter = %d, t_now = %f, dt = %f\n", id, iter, t_now, dt);
+
+            // Calculate pressure at the interfaces
             for (int lev = 0; lev <= nv; lev++) {
                 if (lev == 0) {
                     // extrapolate to lower boundary
@@ -107,8 +139,6 @@ __global__ void mixing_length_adj(double *Pressure_d,  // Pressure [Pa]
                         psm = Pressure_d[id * nv + 1]
                               - Rho_d[id * nv + 0] * Gravit * pow(A / (A + Altitude_d[0]), 2)
                                     * (-Altitude_d[0] - Altitude_d[1]);
-                        // psm = Pressure_d[id * nv + 1]
-                        //       - Rho_d[id * nv + 0] * Gravit * (-Altitude_d[0] - Altitude_d[1]);
                     }
                     else {
                         psm = Pressure_d[id * nv + 1]
@@ -125,10 +155,6 @@ __global__ void mixing_length_adj(double *Pressure_d,  // Pressure [Pa]
                             - Rho_d[id * nv + nv - 1] * Gravit
                                   * pow(A / (A + Altitude_d[nv - 1]), 2)
                                   * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
-                        // pp =
-                        //     Pressure_d[id * nv + nv - 2]
-                        //     - Rho_d[id * nv + nv - 1] * Gravit
-                        //           * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
                     }
                     else {
                         pp =
@@ -150,62 +176,125 @@ __global__ void mixing_length_adj(double *Pressure_d,  // Pressure [Pa]
                     b   = (xi - xim) / (xip - xim);
                     Pressureh_d[id * (nv + 1) + lev] =
                     Pressure_d[id * nv + lev - 1] * a + Pressure_d[id * nv + lev] * b;
+                    
                 }
             }
 
-            // Compute the pressure scale height (Assumes hydrostatic equilibrium <- Will change later)
+            // Compute Potential Temperature (Necessary for the stability check)
             for (int lev = 0; lev < nv; lev++) {
-                scale_height[id * nv + lev] = (Rd_d * Temperature_d[id * nv + lev]) / Gravit ;
-                L[id * nv + lev] = alpha * scale_height[id * nv + lev];
+                pt_d[id * nv + lev] = tempcolumn_d[id * nv + lev]
+                                      * pow(ps / Pressure_d[id * nv + lev],
+                                            Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
             }
 
-            // Compute the temperature gradient
-            for (int lev = 1; lev < nv; lev++) {
-                dT_mlt_d[id * nv + lev] = (Temperature_d[id * (nv + 1) + lev] - Temperature_d[id * (nv + 1) + lev - 1]) / ( Altitudeh_d[lev] - Altitude_d[lev-1]);
+            // Interpolate temperatures from layers (cell-centered) to levels (interfaces)
+            // for (int lev = 0; lev < nv; lev++) {
+            //     fp_column_d[id * nv + lev] = tempcolumn_d[id * nv + lev];
+            // }
+            // using the WENO4 method
+            interpolate_weno4_kernel(Altitudeh_d, Altitude_d, tempcolumn_d, Temperatureh_d, nv, num , false);
+
+            // Linear extrapolation at the lower boundary
+            Temperatureh_d[id * (nv + 1) + 0] = tempcolumn_d[id * nv + 0] + (Altitudeh_d[0] - Altitude_d[0]) 
+                                                * (Temperatureh_d[id * (nv + 1) + 1] - tempcolumn_d[id * nv + 0]) / (Altitudeh_d[1] - Altitude_d[0]);
+
+            // Linear extrapolation at the upper boundary
+            Temperatureh_d[id * (nv + 1) + nv] = tempcolumn_d[id * nv + nv - 1] + (Altitudeh_d[nv] - Altitude_d[nv - 1]) 
+                                                * (Temperatureh_d[id * (nv + 1) + nv - 1] - tempcolumn_d[id * nv + nv - 1]) / (Altitudeh_d[nv-1] - Altitude_d[nv-1]);
+
+
+            // Calculate lapse rate between layers 
+            for (int lev = 0; lev < nv; lev++) {
+                dTdz_d = (Temperatureh_d[id * (nv + 1) + lev + 1] - Temperatureh_d[id * (nv + 1) + lev]) /
+                         (Altitudeh_d[lev + 1] - Altitudeh_d[lev]);
+                lapse_rate_d[id * nv + lev] = -dTdz_d; // Γ = -dT/dz
             }
+
+            // For the topmost layer, replicate the last computed lapse rate (Is this needed?)
+            lapse_rate_d[nv - 1] = lapse_rate_d[nv - 2];
 
             // Iterate over all of the levels and check for convective instability
-            for (int lev = 0; lev < nv - 1; lev++) {
+            for (int lev = 0; lev < nv; lev++) {
+
+                // Compute the pressure scale height 
+                scale_height_local_d = (Rd_d[id * nv + lev] * tempcolumn_d[id * nv + lev]) / Gravit ;
+                L_d = alpha * scale_height_local_d;
+
                 // Sweep upward and check for instability
                 if (pt_d[id * nv + lev + 1] - pt_d[id * nv + lev] < stable) {
+                    if (lev < nv - 1) {
+                        double gamma_ad = Gravit / Cp_d[id * nv + lev];   // Adiabatic lapse rate
                     // Calculate the characteristic vertical velocity
-                    w_mlt[id * nv + lev] = L * sqrt(Gravit/Temperature_d[id * nv + lev] * (dT_mlt_d[id * nv + lev] - gamma_ad));
+                        w_mlt_d = L_d * sqrt(Gravit/tempcolumn_d[id * nv + lev] * (lapse_rate_d[id * nv + lev] - gamma_ad));
 
                     // Calculate the convective heat flux
-                    F_conv[id * nv + lev] = 0.5 * Rho_d[id * nv + lev] * Cp_d * w * Temperature_d[id * nv + lev] * alpha * scale_height * (dT_mlt_d[id * nv + lev] - gamma_ad);
+                        F_conv_d[id * nv + lev] = 0.5 * Rho_d[id * nv + lev] * Cp_d[id * nv + lev] * w_mlt_d * L_d * (tempcolumn_d[id * nv + lev] * lapse_rate_d[id * nv + lev] - gamma_ad);
+                    } else {
+                        // Handle the top boundary (lev = nv - 1)
+                        F_conv_d[id * nv + lev] = 0.0;
+                        w_mlt_d = 0.0; 
+                    }
                 }
                 else{
-                    F_conv[id * nv + lev] = 0.0;
+                    F_conv_d[id * nv + lev] = 0.0;
+                    w_mlt_d = 0.0; 
                 }
-                    
+                
+                // Update Kzz running total (?)
+                Kzz_d[id * nv + lev] += w_mlt_d * L_d;
             }     
+            
 
-            // // Calculate the flux derivative (dF_conv/dz)
-            for (int lev = 0; lev < nv - 1; lev++) {
+            // Interpolate the vertical convective thermal flux (Joyce & Tayar 2023) 
+            // for (int lev = 0; lev < nv; lev++) {
+            //     fp_column_d[id * nv + lev] = F_conv_d[id * nv + lev];
+            // }
+            interpolate_weno4_kernel(Altitudeh_d, Altitude_d, F_conv_d, F_convh_d, nv, num, false);
 
+            // Linear interapolation to the lower boundary
+            F_convh_d[id * (nv + 1) + 0] = F_conv_d[id * nv + 0] + (Altitudeh_d[0] - Altitude_d[0]) 
+                                                * (F_convh_d[id * (nv + 1) + 1] - F_conv_d[id * nv + 0]) / (Altitudeh_d[1] - Altitude_d[0]);
+
+            // Linear interapolation to the upper boundary
+            F_convh_d[id * (nv + 1) + nv] = F_conv_d[id * nv + nv - 1] + (Altitudeh_d[nv] - Altitude_d[nv - 1]) 
+                                                * (F_convh_d[id * (nv + 1) + nv - 1] - F_conv_d[id * nv + nv - 1]) / (Altitudeh_d[nv-1] - Altitude_d[nv-1]);
+
+            // Calculate the flux derivative (dF_conv/dz)
+            for (int lev = 0; lev < nv; lev++) {
                 // Sweep upward and check for instability
                 if (pt_d[id * nv + lev + 1] - pt_d[id * nv + lev] < stable) {
-
-                        dFdz[id * nv + lev] =  (F_conv[id * (nv + 1) + lev - 1]- F_conv[id * (nv + 1) + lev - 1]) / (Altitudeh_d[lev] - Altitude_d[lev-1]);
-
-                        // Calculate the temperature gradient
-                        dTempdt_mlt[id * nv + lev] = -1/(Cp_d * Rho_d[id * nv + lev]) * dFdz[id * nv + lev]; 
+                    if (lev < nv - 1) {
+                        dFdz_d[id * nv + lev] = (F_convh_d[id * (nv + 1) + lev + 1] - F_convh_d[id * (nv + 1) + lev]) /
+                                                (Altitudeh_d[lev + 1] - Altitudeh_d[lev]);
+                    } else {
+                        // Handle the top boundary (lev = nv - 1)
+                        dFdz_d[id * nv + lev] = 0.0;
+                    }
+                } else {
+                    dFdz_d[id * nv + lev] = 0.0;
                 }
-                else {
-                    
-                    dFdz[id * nv + lev] = 0.0
-                    dTempdt_mlt[id * nv + lev] = 0.0
-                }
-
             }
 
-            repeat = false;
+            // Calculate the temperature tendency
+            for (int lev = 0; lev < nv; lev++) {
+                        // Calculate the temperature gradient
+                dTempdt_mlt_d[id * nv + lev] = -1/(Cp_d[id * nv + lev] * Rho_d[id * nv + lev]) * dFdz_d[id * nv + lev]; 
+                // Update the temperature in a sub-timestep approach using a smaller timestep than the dynamical timestep
+                tempcolumn_d[id * nv + lev] = tempcolumn_d[id * nv + lev] + dTempdt_mlt_d[id * nv + lev] * dt;
+                // Update the pressure with the updated temperature because we need it for the stability criterion
+                Pressure_d[id * nv + lev] = tempcolumn_d[id * nv + lev] * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
+            }
+
+            // Update the iteration counter & time step
             iter += 1;
+            t_now += dt;
+        }
+        // Soft adjust the results by only modifying the Qheat term using the calculated temperature
             if (soft_adjust) {
                 double Ttmp, Ptmp;
-                // Update the temperature in a sub-timestep approach using a smaller timestep than the dynamical timestep
+            
                 for (int lev = 0; lev < nv; lev++) {
-                    Ttmp = Temperature_d[id * nv + lev] + dTempdt_mlt[id * nv + lev] * mlt_timestep;
+                Ttmp = tempcolumn_d[id * nv + lev];
                     Ptmp = Ttmp * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
                     //reset pt value to beginning of time step
                     pt_d[id * nv + lev] = Temperature_d[id * nv + lev]
@@ -214,29 +303,21 @@ __global__ void mixing_length_adj(double *Pressure_d,  // Pressure [Pa]
 
                     profx_Qheat_d[id * nv + lev] +=
                         (Cp_d[id * nv + lev] - Rd_d[id * nv + lev]) / Rd_d[id * nv + lev]
-                        * (Ptmp - Pressure_d[id * nv + lev]) / time_step;
+                    * (Ptmp - Pressure_d[id * nv + lev]) / time_step;;
                     //does not repeat
                 }
             }
-            // Compute Temperature & pressure from potential temperature
+        // Hard adjust the pressure and the pot. temperature directly using the calculated temperature
             else {
                 for (int lev = 0; lev < nv; lev++) {
-                    Temperature_d[id * nv + lev] = Temperature_d[id * nv + lev] + dTempdt_mlt[id * nv + lev] * mlt_timestep;
+                Temperature_d[id * nv + lev] = tempcolumn_d[id * nv + lev];
                     Pressure_d[id * nv + lev] = Temperature_d[id * nv + lev] * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
-                    //check pt again
+
                     pt_d[id * nv + lev] = Temperature_d[id * nv + lev]
                                           * pow(Pressure_d[id * nv + lev] / ps,
                                                 -Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
-                    if (lev > 0) {
-                        if (pt_d[id * nv + lev] - pt_d[id * nv + lev - 1] < stable)
-                            repeat = true;
-                    }
-                }
             }
-            
-            
-
         }
-        //printf("id = %d, iter = %d\n", id, iter);
+
     }
 }
