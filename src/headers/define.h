@@ -189,4 +189,4 @@ enum raysp_calc_mode_types { IMP = 0, EXP1 = 1, EXP3 = 2 };
 
 enum thermo_equation_types { ENTROPY = 0, ENERGY = 1 }; //might add pressure?
 
-enum conv_adj_types { HOURDIN = 0, RAYPH = 1 };
+enum conv_adj_types { HOURDIN = 0, RAYPH = 1 , MIXING_LENGTH = 3};
