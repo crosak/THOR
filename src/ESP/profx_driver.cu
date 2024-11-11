@@ -310,7 +310,7 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
                                              lapse_rate_d,  // Lapse rate [K/m]
                                             //  fp_column_d, 
                                              tempcolumn_d, 
-                                             pcolumn_d
+                                             pcolumn_d,
                                              timestep,
                                              sim.A,
                                              sim.soft_adjustment,
