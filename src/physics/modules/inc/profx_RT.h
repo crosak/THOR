@@ -112,7 +112,7 @@ __device__ void radcsw(double *phtemp,
 
         // printf("%d %e\n", lev, (dtemp2 - dtemp[id * nv + lev]) / dtemp2);
         if (isnan(dtemp[id * nv + lev])) {
-            printf("stop here");
+            printf("radcsw is producing NaNs. Stop here!!");
         }
     }
 }
@@ -269,7 +269,7 @@ __device__ void radclw(double *phtemp,
         //              - (flw_up_d[id * (nv + 1) + lev + 1] - flw_dn_d[id * (nv + 1) + lev + 1]))
         //           / (phtemp[id * (nv + 1) + lev] - phtemp[id * (nv + 1) + lev + 1]);
         if (isnan(dtemp[id * nv + lev])) {
-            printf("stop here");
+            printf("radclw is producing NaNs. Stop here!!");
         }
     }
 }
@@ -388,7 +388,8 @@ __global__ void rtm_dual_band(double *pressure_d,
     double pp, ptop;
 
     double xi, xip, xim, a, b;
-
+    // printf("rtm_dualband has been called!");
+    
     if (id < num) {
 
         for (int lev = 0; lev < nv; lev++) {
@@ -580,7 +581,7 @@ __global__ void rtm_dual_band(double *pressure_d,
             DG_Qheat_d[id * nv + lev] = dtemp[id * nv + lev];
             profx_Qheat_d[id * nv + lev] += Qheat_scaling * dtemp[id * nv + lev];
             if (isnan(profx_Qheat_d[id * nv + lev])) {
-                printf("stop here");
+                printf("Profx_Qheat_d has NaNs - stop here (rtm_dualband)");
             }
         }
     }
@@ -1958,13 +1959,13 @@ __device__ void ts_short_char_freedman(int       id,
         //printf("tau_struct finished\n");
 
         // Calculate the short-wave flux in the downwards direction using the characteristic functions
-        // sw_grey_down(id, nlev, Finc, tau_Ve__df_e, sw_down_b__df_e, mu_s);
+        sw_grey_down(id, nlev, Finc, tau_Ve__df_e, sw_down_b__df_e, mu_s);
         
 
         // Sum all bands
         for (int i = 0; i < nlev; i++) {
             // Set the downwards flux directly to zero instead of going through the calculation
-            sw_down_b__df_e[id * nlev + i] = 0.0;
+            // sw_down_b__df_e[id * nlev + i] = 0.0;
             sw_down__df_e[id * nlev + i] = sw_down_b__df_e[id * nlev + i];
         }
 
@@ -2134,7 +2135,7 @@ __global__ void rtm_freedman(double *pressure_d,
 
     const double pi = atan(1.0) * 4;
     double flux_top = 0.0;
-
+    // printf("rtm_freedman has been called!");
     if (id < num) {
 
 
