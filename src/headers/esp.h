@@ -388,6 +388,7 @@ public:
     // mixing length theory variables
     double *Kzz_h;
     double *Kzz_d;
+    double *Kzz_ov_d;
     double *temperatureh_d;
     double *F_conv_d;
     double *F_convh_d;

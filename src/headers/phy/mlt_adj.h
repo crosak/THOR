@@ -291,6 +291,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                                  double *Altitude_d,     // Altitudes of the layers
                                  double *Altitudeh_d,    // Altitudes of the interfaces
                                  double *Kzz_d,          // Eddy diffusion coefficient
+                                 double *Kzz_ov_d,
                                  double *F_conv_d,       // Vertical thermal convective flux [W/m^2]
                                  double *F_convh_d,      // Vertical thermal convective flux at interfaces [W/m^2]
                                  double *dFdz_d,         // Vertical gradient of the thermal convective flux [W/m^3]
@@ -332,8 +333,11 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
 
     // Constants and parameters
     const double alpha = 1;             // MLT parameter, set to 1 for now (Lee+23) 
+    const double beta = 2.2;
     const double stable = 0.0;          // Stability threshold for potential temperature gradient
-    double w_mlt_d;                     // Convective velocity [m/s]
+    const double Kzz_min = 1e1;
+    const double Kzz_max = 1e8;
+    double w_mlt_d, w_rcb_d, w_ov_d;    // Convective velocity [m/s]
     double scale_height_local_d;        // Scale height for the local conditions
     double L_d;                         // Characteristic mixing length [m] 
     double dTdz_d;                      // Vertical temperature gradient [K/m]            
@@ -357,6 +361,8 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
             // Calculate the current timestep
             if ((t_now + mlt_timestep >= time_step)){
                 dt = time_step - t_now;
+                Kzz_d[id * nv + lev] = 0.0;
+                Kzz_ov_d[id * nv + lev] = 0.0;
             }
             else{
                 dt = mlt_timestep;
@@ -477,7 +483,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                     w_mlt_d = 0.0; 
                 }
                 
-                // Update Kzz running total (?)
+                // Update Kzz running total
                 Kzz_d[id * nv + lev] += w_mlt_d * L_d;
             }     
             
@@ -531,6 +537,53 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
             iter += 1;
             t_now += dt;
         }
+
+        // Find the final averaged K_zz value
+        for (int lev = 0; lev < nv; lev++) {
+            Kzz_d[id * nv + lev] = Kzz_d[id * nv + lev] / iter;
+        }
+        
+        // Calculate the overshoot component //
+        // Find the RCB
+        int krcb = nv;
+        w_rcb = 1e-30;
+        for (int lev = nv; lev > 0; lev--) {
+          if (F_convh_d[lev] > 0.0){
+            krcb = lev;
+          }
+          else{
+            krcb = lev + 1;
+            scale_height_local_d = (Rd_d[id * nv + krcb] * tempcolumn_d[id * nv + krcb]) / Gravit ;
+            L_d = alpha * scale_height_local_d;
+            w_mlt_rcb_d = L_d * sqrt(Gravit/tempcolumn_d[id * nv + krcb] * (lapse_rate_d[id * nv + krcb] - gamma_ad));
+            break;
+          }
+        }
+    
+        // Now calculate the overshoot component
+        for (int lev = nv; lev > 0; lev--) {
+            if (lev >= krcb){
+                // In covective region - do not add overshoot
+            }
+            else{
+                // In overshoot region, add overshoot component
+                w_over = exp(log(w_rcb) - beta * fmax(0.0, log(pcolumn_d[id * nv + krcb]/pcolumn_d[id * nv + lev])));
+                scale_height_local_d  = (Rd_d[id * nv + lev] * tempcolumn_d[id * nv + lev]) / Gravit;
+                L_d = alpha * scale_height_local_d;
+                Kzz_ov[id * nv + lev] = w_ov_d * L_d;
+                if (Kzz_ov[id * nv + lev] < Kzz_min){
+                    break;
+                }   
+            }
+        }
+        for (int lev = 0; lev < nv; lev++) {
+            // Make sure Kzz is above minimum value
+            Kzz_d[id * nv + lev] = fmax(Kzz_d[id * nv + lev] + Kzz_ov[id * nv + lev], Kzz_min);
+
+            // Make sure Kzz is smaller than the maximum value
+            Kzz_d[id * nv + lev] = fmin(Kzz_d[id * nv + lev], Kzz_max);
+        }
+
         // Soft adjust the results by only modifying the Qheat term using the calculated temperature
         if (soft_adjust) {
             double Ttmp, Ptmp;

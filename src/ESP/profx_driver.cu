@@ -303,6 +303,7 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
                                              Altitude_d,    // Altitudes of the layers
                                              Altitudeh_d,   // Altitudes of the interfaces
                                              Kzz_d,         // Eddy diffusion coefficient
+                                             Kzz_ov_d,
                                              F_conv_d,      // Vertical thermal convective flux [W/m^2]
                                              F_convh_d,     // Vertical thermal convective flux at interfaces [W/m^2]
                                              dFdz_d,        // Vertical gradient of the thermal convective flux [W/m^3]

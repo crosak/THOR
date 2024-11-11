@@ -333,6 +333,7 @@ __host__ void ESP::alloc_data(bool globdiag,
         // Eddy diffusion coefficient
         Kzz_h = (double *)malloc(nv * point_num * sizeof(double));
         cudaMalloc((void **)&Kzz_d, nv * point_num * sizeof(double));
+        cudaMalloc((void **)&Kzz_ov_d, nv * point_num * sizeof(double));
         
         // Working variables for the MLT routine on the device side // 
         // Temperature at the interfaces [K]
@@ -1750,6 +1751,7 @@ __host__ ESP::~ESP() {
     if (conv_adj_type == MIXING_LENGTH) {
         free(Kzz_h);
         cudaFree(Kzz_d);
+        cudaFree(Kzz_ov_d);
         cudaFree(temperatureh_d);
         cudaFree(F_conv_d);
         cudaFree(F_convh_d);
