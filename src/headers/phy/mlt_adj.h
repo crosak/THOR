@@ -369,35 +369,35 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                 if (lev == 0) {
                     // extrapolate to lower boundary
                     if (GravHeightVar) {
-                        psm = pcolumn_dpcolumn_d[id * nv + 1]
+                        psm = pcolumn_d[id * nv + 1]
                               - Rho_d[id * nv + 0] * Gravit * pow(A / (A + Altitude_d[0]), 2)
                                     * (-Altitude_d[0] - Altitude_d[1]);
                     }
                     else {
-                        psm = pcolumn_dpcolumn_d[id * nv + 1]
+                        psm = pcolumn_d[id * nv + 1]
                               - Rho_d[id * nv + 0] * Gravit * (-Altitude_d[0] - Altitude_d[1]);
                     }
-                    ps                             = 0.5 * (pcolumn_dpcolumn_d[id * nv + 0] + psm);
+                    ps                             = 0.5 * (pcolumn_d[id * nv + 0] + psm);
                     Pressureh_d[id * (nv + 1) + 0] = ps;
                 }
                 else if (lev == nv) {
                     // extrapolate to top boundary
                     if (GravHeightVar) {
                         pp =
-                            pcolumn_dpcolumn_d[id * nv + nv - 2]
+                            pcolumn_d[id * nv + nv - 2]
                             - Rho_d[id * nv + nv - 1] * Gravit
                                   * pow(A / (A + Altitude_d[nv - 1]), 2)
                                   * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
                     }
                     else {
                         pp =
-                            pcolumn_dpcolumn_d[id * nv + nv - 2]
+                            pcolumn_d[id * nv + nv - 2]
                             - Rho_d[id * nv + nv - 1] * Gravit
                                   * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
                     }
                     if (pp < 0)
                         pp = 0; //prevents pressure from going negative
-                    ptop                             = 0.5 * (pcolumn_dpcolumn_d[id * nv + nv - 1] + pp);
+                    ptop                             = 0.5 * (pcolumn_d[id * nv + nv - 1] + pp);
                     Pressureh_d[id * (nv + 1) + lev] = ptop;
                 }
                 else {

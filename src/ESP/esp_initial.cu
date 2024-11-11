@@ -348,9 +348,10 @@ __host__ void ESP::alloc_data(bool globdiag,
         cudaMalloc((void **)&lapse_rate_d, nv * point_num * sizeof(double));
         // Interpolation variables
         // cudaMalloc((void **)&xp_column_d, nv * sizeof(double));
-        cudaMalloc((void **)&fp_column_d, nv * point_num * sizeof(double));
+        // cudaMalloc((void **)&fp_column_d, nv * point_num * sizeof(double));
         // Temporary storage array for calculations
         cudaMalloc((void **)&tempcolumn_d, nv * point_num * sizeof(double));
+        cudaMalloc((void **)&pcolumn_d, nv * point_num * sizeof(double));
     }
 
     if (output_mean == true) {
@@ -1755,8 +1756,9 @@ __host__ ESP::~ESP() {
         cudaFree(dFdz_d);
         cudaFree(dTempdt_mlt_d);
         cudaFree(lapse_rate_d);
-        cudaFree(fp_column_d);
+        // cudaFree(fp_column_d);
         cudaFree(tempcolumn_d);
+        cudaFree(pcolumn_d);
     }
 
     if (phy_modules_execute)
