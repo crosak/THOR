@@ -308,8 +308,9 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
                                              dFdz_d,        // Vertical gradient of the thermal convective flux [W/m^3]
                                              dTempdt_mlt_d, // Temperature tendency due to MLT [K/s]    
                                              lapse_rate_d,  // Lapse rate [K/m]
-                                             fp_column_d, 
+                                            //  fp_column_d, 
                                              tempcolumn_d, 
+                                             pcolumn_d
                                              timestep,
                                              sim.A,
                                              sim.soft_adjustment,

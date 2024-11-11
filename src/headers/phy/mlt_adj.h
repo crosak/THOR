@@ -236,6 +236,47 @@ __device__ void interpolate_weno4_kernel(double* xs, const double* xp, const dou
     }
 }
 
+__device__ void bezier_intp(int     id,
+                                              int     nlay,
+                                              int     iter,
+                                              double *xi,
+                                              double *yi,
+                                              double  x,
+                                              double &y)
+{
+
+    double dx, dx1, dy, dy1;
+    double w, yc, t;
+    //xc = (xi(1) + xi(2))/2.0_dp ! Control point (no needed here, implicitly included)
+    dx  = xi[iter] - xi[iter + 1];
+    dx1 = xi[iter - 1] - xi[iter];
+    dy  = yi[id * nlay + iter] - yi[id * nlay + iter + 1];
+    dy1 = yi[id * nlay + iter - 1] - yi[id * nlay + iter];
+
+    if (x > xi[iter + 1] && x < xi[iter]) {
+        // left hand side interpolation
+        w = dx1 / (dx + dx1);
+
+        yc = yi[id * nlay + iter] - dx / 2.0 * (w * dy / dx + (1.0 - w) * dy1 / dx1);
+
+        t = (x - xi[iter + 1]) / dx;
+
+        y = pow(1.0 - t, 2) * yi[id * nlay + iter + 1] + 2.0 * t * (1.0 - t) * yc
+        + pow(t, 2) * yi[id * nlay + iter];
+    }
+    else {
+        // right hand side interpolation
+        w = dx / (dx + dx1);
+
+        yc = yi[id * nlay + iter] + dx1 / 2.0 * (w * dy1 / dx1 + (1.0 - w) * dy / dx);
+
+        t = (x - xi[iter]) / (dx1);
+
+        y = pow(1.0 - t, 2) * yi[id * nlay + iter] + 2.0 * t * (1.0 - t) * yc
+        + pow(t, 2) * yi[id * nlay + iter - 1];
+    }
+}
+
 
 __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell centers) [Pa]
                                  double *Pressureh_d,    // Pressure at interfaces (cell edges) [Pa]
@@ -255,8 +296,9 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                                  double *dFdz_d,         // Vertical gradient of the thermal convective flux [W/m^3]
                                  double *dTempdt_mlt_d,  // Temperature tendency due to MLT [K/s]    
                                  double *lapse_rate_d,   // Lapse rate [K/m]   
-                                 double *fp_column_d,
+                                //  double *fp_column_d,
                                  double *tempcolumn_d,
+                                 double *pcolumn_d,
                                  double  time_step,      // time step [s]
                                  double  A,
                                  bool    soft_adjust,
@@ -306,6 +348,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
         // Fill in the temporary array to be used in calculations
         for (int lev = 0; lev <= nv; lev++) {
             tempcolumn_d[id * nv + lev] = Temperature_d[id * nv + lev];
+            pcolumn_d[id * nv + lev] = Pressure_d[id * nv + lev];
         }
         int  iter   = 0;
 
@@ -326,35 +369,35 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                 if (lev == 0) {
                     // extrapolate to lower boundary
                     if (GravHeightVar) {
-                        psm = Pressure_d[id * nv + 1]
+                        psm = pcolumn_dpcolumn_d[id * nv + 1]
                               - Rho_d[id * nv + 0] * Gravit * pow(A / (A + Altitude_d[0]), 2)
                                     * (-Altitude_d[0] - Altitude_d[1]);
                     }
                     else {
-                        psm = Pressure_d[id * nv + 1]
+                        psm = pcolumn_dpcolumn_d[id * nv + 1]
                               - Rho_d[id * nv + 0] * Gravit * (-Altitude_d[0] - Altitude_d[1]);
                     }
-                    ps                             = 0.5 * (Pressure_d[id * nv + 0] + psm);
+                    ps                             = 0.5 * (pcolumn_dpcolumn_d[id * nv + 0] + psm);
                     Pressureh_d[id * (nv + 1) + 0] = ps;
                 }
                 else if (lev == nv) {
                     // extrapolate to top boundary
                     if (GravHeightVar) {
                         pp =
-                            Pressure_d[id * nv + nv - 2]
+                            pcolumn_dpcolumn_d[id * nv + nv - 2]
                             - Rho_d[id * nv + nv - 1] * Gravit
                                   * pow(A / (A + Altitude_d[nv - 1]), 2)
                                   * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
                     }
                     else {
                         pp =
-                            Pressure_d[id * nv + nv - 2]
+                            pcolumn_dpcolumn_d[id * nv + nv - 2]
                             - Rho_d[id * nv + nv - 1] * Gravit
                                   * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
                     }
                     if (pp < 0)
                         pp = 0; //prevents pressure from going negative
-                    ptop                             = 0.5 * (Pressure_d[id * nv + nv - 1] + pp);
+                    ptop                             = 0.5 * (pcolumn_dpcolumn_d[id * nv + nv - 1] + pp);
                     Pressureh_d[id * (nv + 1) + lev] = ptop;
                 }
                 else {
@@ -365,7 +408,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                     a   = (xi - xip) / (xim - xip);
                     b   = (xi - xim) / (xip - xim);
                     Pressureh_d[id * (nv + 1) + lev] =
-                    Pressure_d[id * nv + lev - 1] * a + Pressure_d[id * nv + lev] * b;
+                    pcolumn_d[id * nv + lev - 1] * a + pcolumn_d[id * nv + lev] * b;
                     
                 }
             }
@@ -373,7 +416,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
             // Compute Potential Temperature (Necessary for the stability check)
             for (int lev = 0; lev < nv; lev++) {
                 pt_d[id * nv + lev] = tempcolumn_d[id * nv + lev]
-                                      * pow(ps / Pressure_d[id * nv + lev],
+                                      * pow(ps / pcolumn_d[id * nv + lev],
                                             Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
             }
 
@@ -382,7 +425,11 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
             //     fp_column_d[id * nv + lev] = tempcolumn_d[id * nv + lev];
             // }
             // using the WENO4 method
-            interpolate_weno4_kernel(Altitudeh_d, Altitude_d, tempcolumn_d, Temperatureh_d, nv, num , false);
+            // interpolate_weno4_kernel(Altitudeh_d, Altitude_d, tempcolumn_d, Temperatureh_d, nv, num , false);
+            for (int lev = nv - 1; lev > 0; lev--) {
+                bezier_intp(
+                    id, nv, lev, Altitude_d, tempcolumn_d, Altitudeh_d[lev], Temperatureh_d[id * (nv + 1) + lev]);
+            }
 
             // Linear extrapolation at the lower boundary
             Temperatureh_d[id * (nv + 1) + 0] = tempcolumn_d[id * nv + 0] + (Altitudeh_d[0] - Altitude_d[0]) 
@@ -439,7 +486,12 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
             // for (int lev = 0; lev < nv; lev++) {
             //     fp_column_d[id * nv + lev] = F_conv_d[id * nv + lev];
             // }
-            interpolate_weno4_kernel(Altitudeh_d, Altitude_d, F_conv_d, F_convh_d, nv, num, false);
+            // interpolate_weno4_kernel(Altitudeh_d, Altitude_d, F_conv_d, F_convh_d, nv, num, false);
+            for (int lev = nv - 1; lev > 0; lev--) {
+                bezier_intp(
+                    id, nv, lev, Altitude_d, F_conv_d, Altitudeh_d[lev], F_convh_d[id * (nv + 1) + lev]);
+            }
+
 
             // Linear interapolation to the lower boundary
             F_convh_d[id * (nv + 1) + 0] = F_conv_d[id * nv + 0] + (Altitudeh_d[0] - Altitude_d[0]) 
@@ -472,7 +524,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
                 // Update the temperature in a sub-timestep approach using a smaller timestep than the dynamical timestep
                 tempcolumn_d[id * nv + lev] = tempcolumn_d[id * nv + lev] + dTempdt_mlt_d[id * nv + lev] * dt;
                 // Update the pressure with the updated temperature because we need it for the stability criterion
-                Pressure_d[id * nv + lev] = tempcolumn_d[id * nv + lev] * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
+                pcolumn_d[id * nv + lev] = tempcolumn_d[id * nv + lev] * Rd_d[id * nv + lev] * Rho_d[id * nv + lev];
             }
 
             // Update the iteration counter & time step

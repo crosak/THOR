@@ -394,8 +394,9 @@ public:
     double *dFdz_d;
     double *dTempdt_mlt_d;
     double *lapse_rate_d;
-    double *fp_column_d;
+    // double *fp_column_d;
     double *tempcolumn_d;
+    double *pcolumn_d;
 
     // simple cloud model variables
 
