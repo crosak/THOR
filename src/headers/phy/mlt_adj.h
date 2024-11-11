@@ -555,6 +555,7 @@ __global__ void mixing_length_adj(double *Pressure_d,    // Pressure (cell cente
             krcb = lev + 1;
             scale_height_local_d = (Rd_d[id * nv + krcb] * tempcolumn_d[id * nv + krcb]) / Gravit;
             L_d = alpha * scale_height_local_d;
+            double gamma_ad = Gravit / Cp_d[id * nv + krcb];   // Adiabatic lapse rate
             w_mlt_rcb_d = L_d * sqrt(Gravit/tempcolumn_d[id * nv + krcb] * (lapse_rate_d[id * nv + krcb] - gamma_ad));
             break;
           }
