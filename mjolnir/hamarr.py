@@ -1,6 +1,8 @@
 #---- code by Russell Deitrick and Urs Schroffenegger -------------------------
+#---- with slight modifications by Can Akin :).       -------------------------
 
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import matplotlib.axes as axes
@@ -10,6 +12,7 @@ from matplotlib.colors import hsv_to_rgb
 import matplotlib.patheffects as pe
 
 import math
+import traceback
 
 import scipy.interpolate as interp
 import scipy.ndimage as ndimage
@@ -21,6 +24,8 @@ import pdb
 
 import pathlib
 import psutil
+
+from multiprocessing import Pool
 
 try:
     import pyshtools as chairs
@@ -259,6 +264,11 @@ class output_new:
                     outputs['insol'] = 'Insol'
                 if 'tracer' in openh5.keys():
                     outputs['tracer'] = 'tracer' #ch4 ::5, co 1::5, h2o 2::5, co2 3::5, nh3 4::5
+                if 'tracer_cloud' in openh5.keys():
+                    outputs['tracer_cloud'] = 'tracer_cloud'
+                if 'Kzz' in openh5.keys():
+                    print("Kzz detected!")
+                    outputs['Kzz'] = 'Kzz'
                 if 'Tsurface' in openh5.keys():
                     outputs['Tsurface'] = 'Tsurface'
                 if 'Rd' in openh5.keys():
@@ -368,6 +378,25 @@ class output_new:
                         self.h2o = np.reshape(data[2::5],(grid.point_num,grid.nv,tlen))
                         self.co2 = np.reshape(data[3::5],(grid.point_num,grid.nv,tlen))
                         self.nh3 = np.reshape(data[4::5],(grid.point_num,grid.nv,tlen))
+                    if key == 'tracer_cloud':
+                        ntr_cloud = int(data.shape[0] / (grid.point_num * grid.nv))
+                        n_cloud = ntr_cloud // 2
+                        self.n_cloud = n_cloud
+                        print(f"Number of cloud species: {n_cloud}")
+                        species = {}
+                        for i in range(n_cloud):
+                            # Tracer indices 
+                            iv = 2*i     
+                            ic = 2*i + 1
+                            # Reshape into spherical grid
+                            sp_v = np.reshape(data[iv::ntr_cloud], (grid.point_num,grid.nv,tlen))
+                            sp_c = np.reshape(data[ic::ntr_cloud], (grid.point_num,grid.nv,tlen))
+                            # Store dynamically into dict
+                            species[f"sp{i+1}_v"] = sp_v
+                            species[f"sp{i+1}_c"] = sp_c
+                        # Assign attributes to the class object
+                        for name, arr in species.items():
+                            setattr(self, name, arr)
                     elif key == 'tau':
                         self.tau_sw = np.reshape(data[::2],(grid.point_num,grid.nv,tlen))
                         self.tau_lw = np.reshape(data[1::2],(grid.point_num,grid.nv,tlen))
@@ -862,6 +891,8 @@ def regrid(resultsf, simID, ntsi, nts, pgrid_ref='auto', overwrite=False, comp=4
     if hasattr(input, "chemistry"):
         if input.chemistry == 1:
             chem = 1
+    if hasattr(input, "clouds"):
+        print(f"Cloud output available! {input.clouds==1} ")
 
     # begin regrid loop over times
     for t in np.arange(ntsi, nts + 1):
@@ -973,6 +1004,27 @@ def regrid(resultsf, simID, ntsi, nts, pgrid_ref='auto', overwrite=False, comp=4
                 source['CM'] = output.CM[:,0]
                 source['CH'] = output.CH[:,0]
                 source['F_sens'] = output.F_sens[:,0]
+            try:
+                if input.clouds:
+                    print("Writing clouds to the regrid output!")
+                    for i in range(output.n_cloud):
+                        # fetch the arrays from the relevant attributes
+                        sp_v = getattr(output, f"sp{i+1}_v")
+                        sp_c = getattr(output, f"sp{i+1}_c")
+                        
+                        # I will eventually build species ID converter here
+                        # so that species names won't get confused
+                        
+                        # write into the output dict
+                        source[f"cloud_sp{i+1}_v"] = sp_v[:, :, 0] / output.Rho[:, :, 0]
+                        source[f"cloud_sp{i+1}_c"] = sp_c[:, :, 0] / output.Rho[:, :, 0]
+            except Exception as e:
+                print("Exception occured.")
+                traceback.print_exc() 
+            
+            if hasattr(output, 'Kzz'):
+                # pick the first time slice (or average, etc.) just like the others
+                source['Kzz'] = output.Kzz[:, :, 0]
 
             # calculate zonal and meridional velocity (special step for Mh)
             source['U'] = (-source['Mh'][0]*np.sin(grid.lon[:,None])+\
@@ -1103,6 +1155,16 @@ def regrid(resultsf, simID, ntsi, nts, pgrid_ref='auto', overwrite=False, comp=4
                 openh5.close()
 
 if has_pyshtools:
+    
+    def process_SHLSQ(args):
+        """
+        Worker function for multiprocessing.
+        """
+        t, lev, KE_slice, grid_lat_deg, grid_lon_deg, lmax = args
+        coeffs, chiz = chairs.expand.SHExpandLSQ(KE_slice, grid_lat_deg, grid_lon_deg, lmax)
+        power = chairs.spectralanalysis.spectrum(coeffs, unit='per_lm')
+        return t, lev, coeffs, power
+
     def KE_spect(input, grid, output, sigmaref, coord='icoh', lmax_adjust=0):
         tsp = output.nts - output.ntsi + 1
         lmax_grid = np.int(np.floor(np.sqrt(grid.point_num)) / 2 - 1)
@@ -1127,28 +1189,55 @@ if has_pyshtools:
             KE_power = np.zeros((lmax + 1, grid.nv, tsp))
             waven = np.arange(lmax + 1)  # total spherical wavenumber
 
-            cmap = cm.get_cmap('cividis')
+            cmap = mpl.colormaps.get_cmap('cividis')
             fig, ax = plt.subplots(1, 1)
-
-            if tsp == 1:
-                for lev in np.arange(grid.nv):
-                    KE_coeffs[:, :, :, lev, 0], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, 0], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
-                    KE_power[:, lev, 0] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,0], unit='per_lm')
-                    ax.plot(waven, KE_power[:, lev, 0], 'k-', c=cmap(lev / grid.nv), lw=1)
-            else:
-                for t in np.arange(tsp):
+            multi_proc = True
+            if not multi_proc:
+                if tsp == 1:
                     for lev in np.arange(grid.nv):
-                        KE_coeffs[:, :, :, lev, t], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, t], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
-                        KE_power[:, lev, t] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,t], unit='per_lm')
-                        # ax.plot(waven, KE_power[:, lev, t], 'k-', c=cmap(lev / grid.nv), lw=1)
+                        KE_coeffs[:, :, :, lev, 0], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, 0], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
+                        KE_power[:, lev, 0] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,0], unit='per_lm')
+                        ax.plot(waven, KE_power[:, lev, 0], 'k-', c=cmap(lev / grid.nv), lw=1)
+                else:
+                    for t in np.arange(tsp):
+                        for lev in np.arange(grid.nv):
+                            KE_coeffs[:, :, :, lev, t], chiz = chairs.expand.SHExpandLSQ(KE[:, lev, t], grid.lat * 180 / np.pi, grid.lon * 180 / np.pi, lmax)
+                            KE_power[:, lev, t] = chairs.spectralanalysis.spectrum(KE_coeffs[:,:,:,lev,t], unit='per_lm')
+                            # ax.plot(waven, KE_power[:, lev, t], 'k-', c=cmap(lev / grid.nv), lw=1)
 
-                KE_power_mean = np.mean(KE_power,axis=2)
-                for lev in np.arange(grid.nv):
-                    ax.plot(waven, KE_power_mean[:, lev], 'k-', c=cmap(lev/grid.nv), lw=1)
+                    KE_power_mean = np.mean(KE_power,axis=2)
+                    for lev in np.arange(grid.nv):
+                        ax.plot(waven, KE_power_mean[:, lev], 'k-', c=cmap(lev/grid.nv), lw=1)
+            else:
+                print("Parallel processing!")
+                grid_lat_deg = np.deg2rad(grid.lat)
+                grid_lon_deg = np.deg2rad(grid.lon)
+                if tsp == 1:
+                    args_list = [
+                        (0, lev, KE[:, lev, 0], grid_lat_deg, grid_lon_deg, lmax)
+                        for lev in range(grid.nv)
+                    ]
+                    with Pool() as pool:
+                        results = pool.map(process_SHLSQ, args_list)
+                    for t, lev, coeffs, power in results:
+                        KE_coeffs[:, :, :, lev, t] = coeffs
+                        KE_power[:, lev, t] = power
+                        ax.plot(waven, KE_power[:, lev, t], 'k-', c=cmap(lev / grid.nv), lw=1)
+                else:
+                    args_list = []
+                    for t in range(tsp):
+                        for lev in range(grid.nv):
+                            args_list.append((t, lev, KE[:, lev, t], grid_lat_deg, grid_lon_deg, lmax))
+                    with Pool() as pool:
+                        results = pool.map(process_SHLSQ, args_list)
+                    for t, lev, coeffs, power in results:
+                        KE_coeffs[:, :, :, lev, t] = coeffs
+                        KE_power[:, lev, t] = power
 
         else:
             raise IOError("Invalid coord option! Valid options are 'icoh'")
 
+        ax.plot(waven, waven**(-5./3.), 'r-', label="Kolmogorov slope")
         # ax.plot(waven,np.mean(KE_power[:,:,t],axis=1),'k-',lw=2)
         ax.set_yscale('log')
         ax.set_xscale('log')
