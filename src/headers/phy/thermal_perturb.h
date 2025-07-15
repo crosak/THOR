@@ -33,14 +33,14 @@
 //
 //       [1] Mendonca, J.M., Grimm, S.L., Grosheintz, L., & Heng, K., ApJ, 829, 115, 2016
 //
-// Current Code Owners: Joao Mendonca (joao.mendonca@space.dtu.dk)
-//                      Russell Deitrick (russell.deitrick@csh.unibe.ch)
-//                      Urs Schroffenegger (urs.schroffenegger@csh.unibe.ch)
+// Current Code Owners: Can AKIN Can.Akin@physik.lmu.de
+//                      
+//                      
 //
 // History:
 // Version Date       Comment
 // ======= ====       =======
-//
+// 1.0     17/12/2024   (CA)
 //
 ////////////////////////////////////////////////////////////////////////
 
