@@ -48,7 +48,7 @@
 #pragma once
 
 // Physical Constants
-#define kb_constant 1.38e-23  // Boltzmann constant [J/K]
+#define kb_constant 1.38e-23  // Boltzmann constant [J K-1]
 #define mu_constant 1.660e-27 // Atomic mass unit   [kg]
 
 
@@ -109,6 +109,7 @@ public:
     bool conv_adj;
     int  conv_adj_iter;
     bool soft_adjustment;
+    double mlt_timestep;
 
     // thermal perturbations switch (Intended only for Brown Dwarfs!)
     bool thermal_perturb;

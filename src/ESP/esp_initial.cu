@@ -128,7 +128,8 @@ __host__ ESP::ESP(int *                 point_local_,
                   double                radius_star_,
                   double                planet_star_dist_,
                   Insolation &          insolation_,
-                  conv_adj_types        conv_adj_type_) :
+                  conv_adj_types        conv_adj_type_,
+                  int                   n_cloud_) :
     nl_region(nl_region_),
     nr(nr_),
     point_num(point_num_),
@@ -197,6 +198,8 @@ __host__ ESP::ESP(int *                 point_local_,
     Tstar            = Tstar_;
     radius_star      = radius_star_ * R_SUN_th;
     planet_star_dist = planet_star_dist_ * AU_th;
+
+    n_cloud          = n_cloud_;
 
     // Set the physics module execute state for the rest of the lifetime of ESP object
     // only execute physics modules when no benchmarks are enabled
@@ -375,6 +378,9 @@ __host__ void ESP::alloc_data(bool globdiag,
     cudaMalloc((void **)&PM_d, point_num * (mmax + 1) * (nmax + 1) * sizeof(double));
     cudaMalloc((void **)&state_d, nv * point_num * sizeof(curandState));
 
+    // Simple cloud modelling
+    cudaMalloc((void **)&n_tot_d, nv * point_num * n_cloud * sizeof(double));
+    
     //  Temperature
     cudaMalloc((void **)&temperature_d, nv * point_num * sizeof(double));
 
@@ -1715,6 +1721,10 @@ __host__ ESP::~ESP() {
     cudaFree(PM_d);
     cudaFree(state_d);
 
+    // simple cloud modelling
+    cudaFree(n_tot_d);
+
+    // boundary layer module
     cudaFree(boundary_flux_d);
     free(boundary_flux_h);
 

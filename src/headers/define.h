@@ -166,6 +166,9 @@
 #define p_rcb_default 1e6
 #define nburn_default 100
 
+// Cloud module
+#define n_cloud_default 0
+
 enum benchmark_types {
     NO_BENCHMARK         = 0,
     HELD_SUAREZ          = 1,

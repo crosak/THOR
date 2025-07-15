@@ -378,16 +378,18 @@ int main(int argc, char** argv) {
         "core_benchmark", core_benchmark_str, string(core_benchmark_default)); //
     
     // Convective adjustment options
+    string conv_adj_type_str("hourdin");
     config_reader.append_config_var("conv_adj", sim.conv_adj, conv_adj_default);
     config_reader.append_config_var("conv_adj_iter", sim.conv_adj_iter, conv_adj_iter_default);
     config_reader.append_config_var(
         "soft_adjustment", sim.soft_adjustment, soft_adjustment_default);
-    string conv_adj_type_str("hourdin");
     config_reader.append_config_var(
         "conv_adj_type", conv_adj_type_str, string(conv_adj_type_default));
+    config_reader.append_config_var("mlt_timestep", sim.mlt_timestep, mlt_timestep_default);
         
     // Thermal perturbation options
-    config_reader.append_config_var("thermal_perturb", sim.thermal_perturb, thermal_perturb_default);
+    config_reader.append_config_var(
+        "thermal_perturb", sim.thermal_perturb, thermal_perturb_default);
     config_reader.append_config_var("mforce", sim.mforce, mforce_default);
     config_reader.append_config_var("nforce", sim.nforce, nforce_default);
     config_reader.append_config_var("delta_n", sim.delta_n, delta_n_default);
@@ -403,7 +405,6 @@ int main(int argc, char** argv) {
     int GPU_ID_N = 0;
     config_reader.append_config_var("GPU_ID_N", GPU_ID_N, GPU_ID_N_default);
 
-    // int n_out = 1000;
     config_reader.append_config_var("n_out", sim.n_out, n_out_default);
 
     string output_path = "results";
@@ -491,6 +492,9 @@ int main(int argc, char** argv) {
     double Csurf_config = 1e7; // heat capacity of surface (J K^-1 m^-2)
     config_reader.append_config_var("Csurf", Csurf_config, Csurf_config);
 
+    // Cloud module
+    int n_cloud;
+    config_reader.append_config_var("n_cloud", n_cloud, n_cloud_default);
 
     //*****************************************************************
     // set configs for modules
@@ -728,7 +732,6 @@ int main(int argc, char** argv) {
     // }
 
     conv_adj_types conv_adj_type = HOURDIN;
-    // printf("%s (esp.cu)", conv_adj_type_str.c_str());
     if (conv_adj_type_str == "hourdin" || conv_adj_type_str == "Hourdin") {
         conv_adj_type = HOURDIN;
         config_OK &= true;
@@ -1172,7 +1175,8 @@ int main(int argc, char** argv) {
           radius_star,
           planet_star_dist,
           insolation,
-          conv_adj_type);
+          conv_adj_type,
+          n_cloud);
 
     USE_BENCHMARK();
 
@@ -1244,6 +1248,7 @@ int main(int argc, char** argv) {
     log::printf("   Rd     = %f J/(Kg K)\n", sim.Rd);
     log::printf("   Cp     = %f J/(Kg K)\n", sim.Cp);
     log::printf("   Tmean  = %f K\n", sim.Tmean);
+    log::printf("   Tint   = %f K.\n", Tint);
     // surface parameters
     log::printf("   Surface          = %s.\n", surface_config ? "true" : "false");
     log::printf("   Surface Heat Capacity       = %f J/K/m^2.\n", Csurf_config);
@@ -1451,7 +1456,7 @@ int main(int argc, char** argv) {
         if (!sim.gcm_off) {
             //
             //        Dynamical Core Integration (THOR)
-            X.Thor(sim, diag); // simulationt parameters
+            X.Thor(sim, diag); // simulation parameters
         }
 
         //

@@ -399,6 +399,8 @@ public:
     double *pcolumn_d;
 
     // simple cloud model variables
+    int n_cloud;
+    double *n_tot_d;
 
     ///////////////////////////
     // insolation computation helper class
@@ -471,7 +473,8 @@ public:
         double                radius_star_,
         double                planet_star_dist_,
         Insolation &          insolation_,
-        conv_adj_types        conv_adj_type_);
+        conv_adj_types        conv_adj_type_,
+        int                   n_cloud_);
 
     ~ESP();
 
