@@ -588,8 +588,8 @@ __global__ void rtm_dual_band(double *pressure_d,
 }
 
 
-//////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////
+///---------------------------------------------------------//
+/////////////////////PICKET-FENCE/////////////////////////////
 
 __device__ void bezier_altitude_interpolation(int     id,
                                               int     nlay,
@@ -1792,7 +1792,318 @@ __global__ void rtm_picket_fence(double *pressure_d,
     }
 }
 
+
+///---------------------------------------------------------//
+//////////////////BROWN DWARF | FREEDMAN//////////////////////
+
+__device__ inline int findSegmentAscending(const double *T_table, int N, double Treq)
+{
+    // Boundary clamp
+    if (Treq <= T_table[0])   return 0;    
+    if (Treq >= T_table[N-1]) return N - 2;
+
+    // Binary search
+    int left = 0, right = N - 1;
+    while (right - left > 1) {
+        int mid = (left + right) >> 1;
+        if (Treq < T_table[mid]) {
+            right = mid;
+        } else {
+            left = mid;
+        }
+    }
+    return left;  // T_table[left] <= Treq < T_table[left+1]
+}
+
+__device__ inline void bezier_temperature_interpolation(const double *T,
+                                                const double *vals,
+                                                int           iter,
+                                                double        Treq,
+                                                double       &y)
+{
+    // Description:
+    // ------------
+    // Quadratic Bezier interpolation for the tabulated values.
+    // You give in the GCM temperature for the cell and the
+    // closest temperature index from the tabulated values.
+    
+    // Working arrays
+    double dx, dx1, dy, dy1;
+    double w, yc, t;
+
+    dx  = T[iter + 1] - T[iter];
+    dx1 = T[iter]     - T[iter - 1];
+    dy  = vals[iter + 1] - vals[iter];
+    dy1 = vals[iter]     - vals[iter - 1];
+
+    if (Treq > T[iter] && Treq < T[iter + 1]) {
+        w  = dx1 / (dx + dx1);
+        yc = vals[iter] + dx * 0.5 * (w * dy / dx + (1.0 - w) * dy1 / dx1);
+        t  = (Treq - T[iter]) / dx;
+        y  = (1.0 - t) * (1.0 - t) * vals[iter]
+           + 2.0 * t * (1.0 - t) * yc
+           + t * t * vals[iter + 1];
+    }
+    else {
+        w  = dx / (dx + dx1);
+        yc = vals[iter] - dx1 * 0.5 * (w * dy1 / dx1 + (1.0 - w) * dy / dx);
+        t  = (Treq - T[iter]) / (-dx1);
+        y  = (1.0 - t) * (1.0 - t) * vals[iter]
+           + 2.0 * t * (1.0 - t) * yc
+           + t * t * vals[iter - 1];
+    }
+}
+
+
 //////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////
+
+
+__device__ void lw_grey_updown_linear_freedman(int     id,
+                                            int     nlay,
+                                            int     nlev,
+                                            double *Temperature_d,
+                                            double *be__df_e,
+                                            double *tau_IRe__df_e,
+                                            double *lw_up__df_e,
+                                            double *lw_down__df_e,
+                                            double *dtau__dff_l,
+                                            double *del__dff_l,
+                                            double *edel__dff_l,
+                                            double *e0i__dff_l,
+                                            double *e1i__dff_l,
+                                            double *Am__dff_l,
+                                            double *Bm__dff_l,
+                                            double *lw_up_g__dff_e,
+                                            double *lw_down_g__dff_e,
+                                            double *Gp__dff_l,
+                                            double *Bp__dff_l,
+                                            double *T_clouds_tabulated_d,
+                                            double *w_R_tabulated_d,
+                                            double *g_R_tabulated_d,
+                                            double *dtau__dff_l_a,
+                                            double *k_IR_nv_d,
+                                            double *k_Ross_cloud_d,
+                                            int     N_T,
+                                            int     n_cloud,
+                                            bool    thermal_coupling,
+                                            double  be_int) 
+{
+    // dependencies
+    //// expll -> math
+    //// atan -> math
+
+    const double pi    = atan((double)(1)) * 4;
+    const double twopi = 2.0 * pi;
+
+    // Work variables and arrays
+    int k, g;
+
+    // Thermal coupling variables
+    double eps, w_R_cloud_d, g_R_cloud_d, w_star;
+    double tau_tilde, tau_layer;
+    double fc, pm2, sigma2;
+    double dtau_eff;
+    int closest_idx;
+
+    //Gauss quadrature variables
+    const int gauss_ng = 5;
+    double    uarr[gauss_ng];
+    double    w[gauss_ng];
+    double    del, e0i, e1i, eli_del;
+
+    if (gauss_ng == 1) {
+        uarr[0] = 1.0 / 1.66;
+        w[0]    = 1.0;
+    }
+    else if (gauss_ng == 2) {
+        uarr[0] = 0.21132487;
+        uarr[1] = 0.78867513;
+        w[0]    = 0.5;
+        w[1]    = 0.5;
+    }
+    else if (gauss_ng == 5) {
+        uarr[0] = 0.0985350858;
+        uarr[1] = 0.3045357266;
+        uarr[2] = 0.5620251898;
+        uarr[3] = 0.8019865821;
+        uarr[4] = 0.9601901429;
+        w[0]    = 0.0157479145;
+        w[1]    = 0.0739088701;
+        w[2]    = 0.1463869871;
+        w[3]    = 0.1671746381;
+        w[4]    = 0.0967815902;
+    }
+
+    // Calculate the optical depth difference at each layer
+    for (k = nlay - 1; k > -1; k--) {
+        dtau__dff_l[id * nlay + k] =
+        (tau_IRe__df_e[id * nlev + k] - tau_IRe__df_e[id * nlev + k + 1]);
+    }
+    
+    // Absorption approximation
+    if (thermal_coupling){
+        // Indexing convention of the cloud module
+        const int STRIDE_ID_SP  = nlay * n_cloud;
+        const int STRIDE_LEV_SP = n_cloud;
+        const int nstr = 2 * gauss_ng;
+
+        for (int lev = 0; lev < nlay; lev++){
+            // Zero the arrays at every level
+            double w_R_tot_d = 0.0;
+            double g_R_tot_d = 0.0;
+            for (int icloud = 0; icloud < n_cloud; icloud++){
+                // Indexing variables
+                int idx_sp       = id * STRIDE_ID_SP + lev * STRIDE_LEV_SP + icloud;
+                // Slice offset
+                const int offset = icloud * N_T;
+                
+                // Interpolate tabulated values
+                closest_idx = findSegmentAscending(&T_clouds_tabulated_d[offset], N_T, Temperature_d[id * nlay + lev]);
+                bezier_temperature_interpolation(&T_clouds_tabulated_d[offset],
+                                                &w_R_tabulated_d[offset],
+                                                closest_idx,
+                                                Temperature_d[id * nlay + lev],
+                                                w_R_cloud_d);
+                bezier_temperature_interpolation(&T_clouds_tabulated_d[offset],
+                                                &g_R_tabulated_d[offset],
+                                                closest_idx,
+                                                Temperature_d[id * nlay + lev],
+                                                g_R_cloud_d);
+
+                // Approximate single-scattering albedo and asymmetry factor
+                w_R_tot_d += (w_R_cloud_d * k_Ross_cloud_d[idx_sp]);
+                g_R_tot_d += (g_R_cloud_d * w_R_cloud_d * k_Ross_cloud_d[idx_sp]);
+            }
+            
+            w_R_tot_d = w_R_tot_d / k_IR_nv_d[id * nlay + lev];
+            // Trying to avoid division by zero
+            if (w_R_tot_d > 0.0)
+                g_R_tot_d = g_R_tot_d / (w_R_tot_d * k_IR_nv_d[id * nlay + lev]);
+            else
+                g_R_tot_d = 0.0;
+
+            // delta-M+ scaling Lee (2024), Wiscombe (1977)
+            w_star = w_R_tot_d;     // default: no scaling
+
+            tau_layer = dtau__dff_l[id * nlay + lev];
+
+            if (g_R_tot_d > 1.0e-6) {
+
+                fc  = pow(g_R_tot_d, nstr);   // Wiscombe weight
+                pm2 = pow(g_R_tot_d, nstr+1); // next moment
+
+                // Variant-C tweak to conserve 2nd moment
+                sigma2 = ((nstr+1.0)*(nstr+1.0) - nstr*nstr) / log( (fc*fc)/(pm2*pm2) );
+                fc *= exp(nstr*nstr / (2.0*sigma2));
+
+                w_star = w_R_tot_d * (1.0 - fc) / (1.0 - w_R_tot_d * fc);
+                tau_tilde  = (1.0 - w_R_tot_d * fc) * tau_layer;
+            } else {
+                tau_tilde  = tau_layer;
+            }
+
+            // Calculate modified co-albedo epsilon
+            eps = sqrt((1.0 - w_star)*(1.0 - g_R_tot_d * w_star));
+
+            // Modified optical depth for transmission function
+            dtau__dff_l_a[id * nlay + lev] = eps * tau_tilde;
+            if (id == 0){
+                printf("k_IR = %.3e | dtau__dff_l = %.3e | dtau__dff_l_a = %.3e | eps = %.3e  | lev = %d \n",
+                        k_IR_nv_d[id * nlay + lev], dtau__dff_l[id * nlay + lev], dtau__dff_l_a[id * nlay + lev], eps, lev);
+            }
+        }
+    }
+    // Zero the flux arrays
+    for (k = 0; k < nlev; k++) {
+        lw_down__df_e[id * nlev + k] = 0.0;
+        lw_up__df_e[id * nlev + k]   = 0.0;
+    }
+
+    // Start loops to integrate in mu space
+    for (g = 0; g < gauss_ng; g++) {
+        // Prepare loop
+        for (k = nlay - 1; k > -1; k--) {
+            // Olson & Kunasz (1987) linear interpolant parameters
+            if (thermal_coupling){
+                del                    = dtau__dff_l_a[id * nlay + k] / uarr[g];
+                dtau_eff               = dtau__dff_l_a[id * nlay + k];  
+            }else{
+                del                    = dtau__dff_l[id * nlay + k] / uarr[g];
+                dtau_eff               = dtau__dff_l[id * nlay + k];
+            }
+            edel__dff_l[id * nlay + k] = exp(-del);
+            e0i                        = 1.0 - edel__dff_l[id * nlay + k];
+            e1i                        = del - e0i;
+
+            eli_del = e1i / del; //  The equivalent to the linear in tau term
+
+            if (dtau_eff < 1e-6) {
+                // If we are in very low optical depth regime, then use an isothermal approximation
+                Am__dff_l[id * nlay + k] =
+                (0.5 * (be__df_e[id * nlev + k] + be__df_e[id * nlev + k + 1]) * e0i)
+                / be__df_e[id * nlev + k + 1];
+                Bm__dff_l[id * nlay + k] = 0.0;
+                Gp__dff_l[id * nlay + k] = 0.0;
+                Bp__dff_l[id * nlay + k] = Am__dff_l[id * nlay + k];
+            }
+            else {
+                Am__dff_l[id * nlay + k] = e0i - eli_del;
+                Bm__dff_l[id * nlay + k] = eli_del;
+                Gp__dff_l[id * nlay + k] = Am__dff_l[id * nlay + k];
+                Bp__dff_l[id * nlay + k] = Bm__dff_l[id * nlay + k];
+            }
+        }
+
+        // Begin two-stream loops
+        // Perform downward loop first
+        // ghost layer radiates down as well
+        lw_down_g__dff_e[id * nlev + (nlev - 1)] = 0.0;
+        lw_down_g__dff_e[id * nlev + (nlev - 1)] =
+        1 * (1.0 - exp(-tau_IRe__df_e[id * nlev + (nlev - 1)] / uarr[g]))
+        * be__df_e[id * nlev + (nlev - 1)];
+
+        for (k = nlev - 2; k > -1; k--) {
+            lw_down_g__dff_e[id * nlev + k] =
+            lw_down_g__dff_e[id * nlev + k + 1] * edel__dff_l[id * nlay + k]
+            + Am__dff_l[id * nlay + k] * be__df_e[id * nlev + k + 1]
+            + Bm__dff_l[id * nlay + k] * be__df_e[id * nlev + k]; // TS intensity
+        }
+
+
+        // Perform upward loop
+        // Lower boundary condition - internal heat definition Fint = F_down - F_up
+        // here we use the same condition but use intensity units to be consistent
+
+        lw_up_g__dff_e[id * nlev + 0] = be_int + lw_down_g__dff_e[id * nlev + 0];
+        for (k = 1; k < nlev; k++) {
+            lw_up_g__dff_e[id * nlev + k] =
+            lw_up_g__dff_e[id * nlev + k - 1] * edel__dff_l[id * nlay + k - 1]
+            + Bp__dff_l[id * nlay + k - 1] * be__df_e[id * nlev + k]
+            + Gp__dff_l[id * nlay + k - 1] * be__df_e[id * nlev + k - 1]; // TS intensity
+        }
+
+
+        // Sum up flux arrays with Gauss weights and points
+        for (k = 0; k < nlev; k++) {
+            lw_down__df_e[id * nlev + k] =
+            lw_down__df_e[id * nlev + k] + lw_down_g__dff_e[id * nlev + k] * w[g] * uarr[g];
+            lw_up__df_e[id * nlev + k] =
+            lw_up__df_e[id * nlev + k] + lw_up_g__dff_e[id * nlev + k] * w[g] * uarr[g];
+        }
+    }
+
+    for (k = 0; k < nlev; k++) {
+        lw_down__df_e[id * nlev + k] = twopi * lw_down__df_e[id * nlev + k];
+        lw_up__df_e[id * nlev + k]   = twopi * lw_up__df_e[id * nlev + k];
+    }
+}
+
+
+//////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////
+
+
 __device__ void ts_short_char_freedman(int       id,
                               const int nlay,
                               const int nlev,
@@ -1814,7 +2125,6 @@ __device__ void ts_short_char_freedman(int       id,
                               double *tau_Ve__df_e,
                               double *tau_IRe__df_e,
                               double *Te__df_e,
-                              bool    bezier,
                               double *be__df_e,
                               double *sw_down__df_e,
                               double *sw_down_b__df_e,
@@ -1837,6 +2147,14 @@ __device__ void ts_short_char_freedman(int       id,
                               double *lw_down_g__dff_e,
                               double *Gp__dff_l,
                               double *Bp__dff_l,
+                              double *T_clouds_tabulated_d,
+                              double *w_R_tabulated_d,
+                              double *g_R_tabulated_d,
+                              double *dtau__dff_l_a,
+                              double *k_Ross_cloud_d,
+                              int N_T,
+                              int n_cloud,
+                              bool thermal_coupling,
                               double *ASR_d,
                               double *OLR_d) {
     // dependencies
@@ -1864,60 +2182,20 @@ __device__ void ts_short_char_freedman(int       id,
 
     ///////////////////
     // Find temperature at layer edges through interpolation and extrapolation
-    if (bezier) {
-        //  Perform interpolation using Bezier peicewise polynomial interpolation
-
-
-        for (int i = nlay - 2; i > 0; i--) {
-            bezier_altitude_interpolation(
-                id, nlay, i, Altitude_d, Tl, Altitudeh_d[i], Te__df_e[id * nlev + i]);
-        }
-
-        bezier_altitude_interpolation(id,
-                                      nlay,
-                                      nlay - 2,
-                                      Altitude_d,
-                                      Tl,
-                                      Altitudeh_d[nlay - 1],
-                                      Te__df_e[id * nlev + nlay - 1]);
-
-        /*
-            for (int i = nlay-2; i > 0; i--)
-            {
-                bezier_interpolation(   id,
-                                        nlay,
-                                        i,
-                                        pl,
-                                        Tl,
-                                        pe[id * nlev + i],
-                                        Te__df_e[id * nlev + i]);
-            }
-
-
-            bezier_interpolation(   id,
-                                    nlay,
-                                    nlay-2,
-                                    pl,
-                                    Tl,
-                                    pe[id * nlev + nlay - 1],
-                                    Te__df_e[id * nlev + nlay - 1]);
-            */
+    //  Perform interpolation using Bezier peicewise polynomial interpolation
+    for (int i = nlay - 2; i > 0; i--) {
+        bezier_altitude_interpolation(
+            id, nlay, i, Altitude_d, Tl, Altitudeh_d[i], Te__df_e[id * nlev + i]);
     }
-    else {
-        //Perform interpolation using linear interpolation
-        /*
-            for (int i = nlay-2; i > -1; i--) {
-                linear_log_interp(  id,
-                                    i,
-                                    nlay,
-                                    nlev,
-                                    Altitude_d,
-                                    Altitudeh_d,
-                                    Tl,
-                                    Te__df_e);
-            }
-            */
-    }
+
+    bezier_altitude_interpolation(id,
+                                  nlay,
+                                  nlay - 2,
+                                  Altitude_d,
+                                  Tl,
+                                  Altitudeh_d[nlay - 1],
+                                  Te__df_e[id * nlev + nlay - 1]);
+
 
     //  Edges are linearly interpolated
 
@@ -2000,27 +2278,36 @@ __device__ void ts_short_char_freedman(int       id,
     double be_int = (StBC * pow((Tint), 4.0) / pi);
 
     // Calculate lw flux
-    lw_grey_updown_linear(id,
-                          nlay,
-                          nlev,
-                          be__df_e,
-                          tau_IRe__df_e,
-                          lw_up_b__df_e,
-                          lw_down_b__df_e,
-                          dtau__dff_l,
-                          del__dff_l,
-                          edel__dff_l,
-                          e0i__dff_l,
-                          e1i__dff_l,
-                          Am__dff_l,
-                          Bm__dff_l,
-                          lw_up_g__dff_e,
-                          lw_down_g__dff_e,
-                          Gp__dff_l,
-                          Bp__dff_l,
-                          be_int);
+    lw_grey_updown_linear_freedman(id,
+                                nlay,
+                                nlev,
+                                Tl,
+                                be__df_e,
+                                tau_IRe__df_e,
+                                lw_up_b__df_e,
+                                lw_down_b__df_e,
+                                dtau__dff_l,
+                                del__dff_l,
+                                edel__dff_l,
+                                e0i__dff_l,
+                                e1i__dff_l,
+                                Am__dff_l,
+                                Bm__dff_l,
+                                lw_up_g__dff_e,
+                                lw_down_g__dff_e,
+                                Gp__dff_l,
+                                Bp__dff_l,
+                                T_clouds_tabulated_d,
+                                w_R_tabulated_d,
+                                g_R_tabulated_d,
+                                dtau__dff_l_a,
+                                k_IR_nv_d,
+                                k_Ross_cloud_d,
+                                N_T,
+                                n_cloud,
+                                thermal_coupling,
+                                be_int);
 
-    //printf("lw_grey_updown_linear finished\n");
 
 
     // Sum all bands
@@ -2039,11 +2326,12 @@ __device__ void ts_short_char_freedman(int       id,
         net_F_nvi_d[id * nlev + i]  = lw_net__df_e[id * nlev + i] + sw_net__df_e[id * nlev + i];
     }
 
-
-    //printf("Kitzmann finished\n");
 }
 
+
 //////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////
+
 
 __global__ void rtm_freedman(double *pressure_d,
                              double *pressureh_d,
@@ -2092,7 +2380,6 @@ __global__ void rtm_freedman(double *pressure_d,
                              double *tau_Ve__df_e,
                              double *tau_IRe__df_e,
                              double *Te__df_e,
-                             bool    bezier,
                              double *be__df_e,
                              double *sw_down__df_e,
                              double *sw_down_b__df_e,
@@ -2115,9 +2402,21 @@ __global__ void rtm_freedman(double *pressure_d,
                              double *lw_down_g__dff_e,
                              double *Gp__dff_l,
                              double *Bp__dff_l,
+                             // Cloud module arrays
+                             double *k_Ross_cloud_d,
+                             double *T_clouds_tabulated_d,
+                             double *alpha_R_tabulated_d,
+                             double *w_R_tabulated_d,
+                             double *g_R_tabulated_d,
+                             double *dtau__dff_l_a,
+                             int      N_T,
+                             bool     thermal_coupling,
+                             double *n_tot_d,
+                             int     n_cloud,
                              //general model parameters
                              bool rt1Dmode,
-                             bool DeepModel) {
+                             bool DeepModel) 
+{
 
 
     //
@@ -2135,7 +2434,12 @@ __global__ void rtm_freedman(double *pressure_d,
 
     const double pi = atan(1.0) * 4;
     double flux_top = 0.0;
-    // printf("rtm_freedman has been called!");
+    const double cm2_to_m2 = 0.0001;
+
+    // Work variables 
+    double alpha_R_d;
+    int closest_idx;
+
     if (id < num) {
 
 
@@ -2143,13 +2447,6 @@ __global__ void rtm_freedman(double *pressure_d,
 
             dtemp[id * nv + lev] = 0.0;
         }
-
-        // rescale zenith angle
-        /*
-        double TransPolAngle;
-        TransPolAngle = asin((radius_star-Altitude_d[id * nv + 0]) / r_rob);
-        zenith_angles[id] = (zenith_angles[id] + TransPolAngle) / (1 + TransPolAngle);
-        */
 
         // Read non-constant kappa values from the Rosseland mean opacity tables of Freedman et al.(2014)
         for (int level = 0; level < nv; level++) {
@@ -2160,19 +2457,14 @@ __global__ void rtm_freedman(double *pressure_d,
                                    met,
                                    k_IR_nv_d[id * nv + level]);
 
-
-            /*
-            kernel_k_Ross_Freedman_bilinear_interpolation_polynomial_fit(temperature_d[id * nv + level],
-                pressure_d[id * nv + level],
-                OpaTableTemperature,
-                OpaTablePressure,
-                OpaTableKappa,
-                k_IR_2_nv_d[id * nv * 2 + 0 * nv + level]);
-            */
-
+            // Grey limit for the optically thin region Tan+2021, Lee+2023
+            // Not required for stability necessarily but Rosseland mean is
+            // not accurate in this regime.
+            if (k_IR_nv_d[id * nv + level] < 1e-3){
+                k_IR_nv_d[id * nv + level] = 1e-3;
+            }
 
             // Compute opacities
-            // double kappa_lw_lat;
             if (latf_lw) {
                 //latitude dependence of opacity, for e.g., earth
                 // not well tested yet
@@ -2181,7 +2473,46 @@ __global__ void rtm_freedman(double *pressure_d,
             else {
                 k_IR_nv_d[id * nv + level] = k_IR_nv_d[id * nv + level];
             }
+            
+            // Rosseland clouds // 
+            if (thermal_coupling){
+                // Indexing convention of the cloud module
+                const int STRIDE_ID_SP  = nv * n_cloud;
+                const int STRIDE_LEV_SP = n_cloud;
 
+                double k_cld_sum = 0.0;
+                for (int icloud = 0; icloud < n_cloud; icloud++){
+                    // Indexing variables
+                    int idx_sp       = id * STRIDE_ID_SP + level * STRIDE_LEV_SP + icloud;
+                    // Slice offset
+                    const int offset = icloud * N_T;
+                    
+                    // Interpolate extinction attenuation coefficient
+                    closest_idx = findSegmentAscending(&T_clouds_tabulated_d[offset], N_T, temperature_d[id * nv + level]);
+                    bezier_temperature_interpolation(&T_clouds_tabulated_d[offset],
+                                                     &alpha_R_tabulated_d[offset],
+                                                     closest_idx,
+                                                     temperature_d[id * nv + level],
+                                                     alpha_R_d);
+                    // Calculate cloud opacities
+                    k_Ross_cloud_d[idx_sp] = (alpha_R_d * cm2_to_m2 * n_tot_d[idx_sp]) / Rho_d[id * nv + level];
+                    
+                    k_cld_sum += k_Ross_cloud_d[idx_sp];
+                    // if (id == 0){
+                    //     printf("Sp: %d  | k_IR = %.3e | k_cloud = %.3e | n_tot = %.1e | lev = %d \n",
+                    //             icloud, k_IR_nv_d[id * nv + level], k_Ross_cloud_d[idx_sp], n_tot_d[idx_sp], level);
+                    // }
+
+                }
+                // Add cloud opacities to the background gas opacities
+                k_IR_nv_d[id * nv + level] += k_cld_sum;
+
+                // if (id == 0){
+                //         printf("After the thermal coupling!\n");
+                //         printf("  k_IR = %.3e | lev = %d \n", k_IR_nv_d[id * nv + level], level);
+                // }
+            }
+            // (For testing purposes) Technically we do not need visual band opacities
             // I don't know how to do this better for now... 
             k_V_nv_d[id * nv + level] = kappa_sw;
         }
@@ -2214,7 +2545,6 @@ __global__ void rtm_freedman(double *pressure_d,
                                   tau_Ve__df_e,
                                   tau_IRe__df_e,
                                   Te__df_e,
-                                  bezier,
                                   be__df_e,
                                   sw_down__df_e,
                                   sw_down_b__df_e,
@@ -2237,6 +2567,14 @@ __global__ void rtm_freedman(double *pressure_d,
                                   lw_down_g__dff_e,
                                   Gp__dff_l,
                                   Bp__dff_l,
+                                  T_clouds_tabulated_d,
+                                  w_R_tabulated_d,
+                                  g_R_tabulated_d,
+                                  dtau__dff_l_a,
+                                  k_Ross_cloud_d,
+                                  N_T,
+                                  n_cloud,
+                                  thermal_coupling,
                                   ASR_d,
                                   OLR_d);
         }
@@ -2265,7 +2603,6 @@ __global__ void rtm_freedman(double *pressure_d,
                                   tau_Ve__df_e,
                                   tau_IRe__df_e,
                                   Te__df_e,
-                                  bezier,
                                   be__df_e,
                                   sw_down__df_e,
                                   sw_down_b__df_e,
@@ -2288,6 +2625,14 @@ __global__ void rtm_freedman(double *pressure_d,
                                   lw_down_g__dff_e,
                                   Gp__dff_l,
                                   Bp__dff_l,
+                                  T_clouds_tabulated_d,
+                                  w_R_tabulated_d,
+                                  g_R_tabulated_d,
+                                  dtau__dff_l_a,
+                                  k_Ross_cloud_d,
+                                  N_T,
+                                  n_cloud,
+                                  thermal_coupling,
                                   ASR_d,
                                   OLR_d);
         }
@@ -2299,6 +2644,9 @@ __global__ void rtm_freedman(double *pressure_d,
                 (net_F_nvi_d[id * nvi + level] - net_F_nvi_d[id * nvi + level + 1])
                 / ((Altitudeh_d[level] - Altitudeh_d[level + 1]));
             //((Altitudeh_d[level] - Altitudeh_d[level+1])*Rho_d[id*nv  + level]*gravit);
+            // if (id == 0){
+            //     printf("Thermal fluxes: %.3e | lev = %d\n", dtemp[id * nv + level], level);
+            // }
         }
 
 
@@ -2336,9 +2684,9 @@ __global__ void rtm_freedman(double *pressure_d,
             }
             DG_Qheat_d[id * nv + lev] = dtemp[id * nv + lev];
             profx_Qheat_d[id * nv + lev] += Qheat_scaling * dtemp[id * nv + lev];
-            if (id == 430) {
+            if (id == 430) { // Why 430??
                 if (isnan(profx_Qheat_d[id * nv + lev])) {
-                    printf("profx_Qheat_d has NaNs - stop here");
+                    printf("profx_Qheat_d has NaNs - stop here \n");
                 }
             }
             // }

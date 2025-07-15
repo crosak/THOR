@@ -202,7 +202,7 @@ private:
     double* sw_net__h;
     double* dtau;
 
-    //Kitzman working variables
+    // Kitzmann working variables
     double* tau_Ve__df_e;
     double* tau_IRe__df_e;
     double* Te__df_e;
@@ -235,6 +235,26 @@ private:
     double* k_V__h;
     double* k_IR_nv_d;
     double* k_V_nv_d;
+
+    // Rosseland cloud parameters
+    int  n_cloud = 0;
+    bool thermal_coupling = false;
+    int  N_T;
+
+    std::vector<std::string> cloud_albs_coeff_filenames;
+    std::vector<std::string> cloud_asym_coeff_filenames;
+    std::vector<std::string> cloud_ext_coeff_filenames;
+    double* T_clouds_tabulated_h;
+    double* alpha_R_tabulated_h;
+    double* w_R_tabulated_h;
+    double* g_R_tabulated_h;
+    
+    double* T_clouds_tabulated_d;
+    double* alpha_R_tabulated_d;
+    double* w_R_tabulated_d;
+    double* g_R_tabulated_d;
+    double* k_Ross_cloud_d;
+    double* dtau__dff_l_a;
 
     //  These arrays are for temporary usage in RT code
     double* dtemp;

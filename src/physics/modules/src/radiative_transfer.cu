@@ -44,6 +44,7 @@
 #include "radiative_transfer.h"
 
 #include "profx_RT.h"
+#include "radiative_transfer_host.h"
 
 #include "debug_helpers.h"
 #include "insolation.h"
@@ -67,36 +68,41 @@ void radiative_transfer::print_config() {
 
     // basic star-planet properties
     log::printf("    rt_type                     = %s \n", rt_type_str.c_str());
-    log::printf("    Tstar                       = %f K.\n", Tstar);
-    log::printf("    Orbital distance            = %f au.\n", planet_star_dist / AU_th);
-    log::printf("    Radius of host star         = %f R_sun.\n", radius_star / R_SUN_th);
-    log::printf("    1.0/Diffusivity factor      = %f.\n", diff_ang_config);
-    // log::printf("    Internal flux temperature   = %f K.\n", Tint_config);
-    log::printf("    Bond albedo                 = %f.\n", albedo_config);
-    // log::printf("    Shortwave Absorption coef   = %f.\n", tausw_config);
-    // log::printf("    Longwave Absorption coef    = %f.\n", taulw_config);
-    log::printf("    Using sin(lat) variation LW?      = %s.\n", latf_lw_config ? "true" : "false");
-    log::printf("    Longwave opacity (poles)  = %f.\n", kappa_lw_pole_config);
-    log::printf("    Power law index of unmixed LW abs = %f.\n", n_lw_config);
-    // log::printf("    Strength of mixed LW abs    = %f.\n", f_lw_config);
-    log::printf("    Power law index of SW       = %f.\n", n_sw_config);
-    log::printf("\n");
 
+    if (rt_type == PICKETFENCE || rt_type == DUALBANDGRAY){
+        log::printf("    Tstar                       = %f K.\n", Tstar);
+        log::printf("    Orbital distance            = %f au.\n", planet_star_dist / AU_th);
+        log::printf("    Radius of host star         = %f R_sun.\n", radius_star / R_SUN_th);
+        log::printf("    1.0/Diffusivity factor      = %f.\n", diff_ang_config);
+        log::printf("    Bond albedo                 = %f.\n", albedo_config);
+        // log::printf("    Shortwave Absorption coef   = %f.\n", tausw_config);
+        // log::printf("    Longwave Absorption coef    = %f.\n", taulw_config);
+        log::printf("    Using sin(lat) variation LW?      = %s.\n", latf_lw_config ? "true" : "false");
+        log::printf("    Longwave opacity (poles)  = %f.\n", kappa_lw_pole_config);
+        log::printf("    Power law index of unmixed LW abs = %f.\n", n_lw_config);
+        // log::printf("    Strength of mixed LW abs    = %f.\n", f_lw_config);
+        log::printf("    Power law index of SW       = %f.\n", n_sw_config);
+        log::printf("\n");
+    
+    
+        log::printf("    1D mode                     = %s.\n", rt1Dmode_config ? "true" : "false");
+    
+        // spinup-spindown parameters
+        log::printf("    Spin up start step          = %d.\n", spinup_start_step);
+        log::printf("    Spin up stop step           = %d.\n", spinup_stop_step);
+        log::printf("    Spin down start step        = %d.\n", spindown_start_step);
+        log::printf("    Spin down stop step         = %d.\n", spindown_stop_step);
+    }else if (rt_type == FREEDMAN){
+        log::printf("    Metallicity                 = %f log10([M/H]).\n", metalicity);
+        log::printf("    Thermal coupling            = %s.\n", thermal_coupling ? "true" : "false");
+    }
 
-    log::printf("    1D mode                     = %s.\n", rt1Dmode_config ? "true" : "false");
-
-    // spinup-spindown parameters
-    log::printf("    Spin up start step          = %d.\n", spinup_start_step);
-    log::printf("    Spin up stop step           = %d.\n", spinup_stop_step);
-    log::printf("    Spin down start step        = %d.\n", spindown_start_step);
-    log::printf("    Spin down stop step         = %d.\n", spindown_stop_step);
 }
 
 bool radiative_transfer::initialise_memory(const ESP &              esp,
                                            device_RK_array_manager &phy_modules_core_arrays) {
 
     // Radiative Transfer Type allocation for this class 
-    // printf("%s (radiative_transfer.cu | Memory Allocation)", rt_type_str.c_str());
     bool config_OK = true;
     if (rt_type_str == "DualbandGray" || rt_type_str == "DualbandGrey" || rt_type_str == "DG") {
         rt_type = DUALBANDGRAY;
@@ -216,9 +222,6 @@ bool radiative_transfer::initialise_memory(const ESP &              esp,
     }
     else if (rt_type == FREEDMAN) {
         //  Rad Transfer
-
-        //cuda_check_status_or_exit(__FILE__, __LINE__);
-
         cudaMalloc((void **)&phtemp, esp.nvi * esp.point_num * sizeof(double));
         cudaMalloc((void **)&dtemp, esp.nv * esp.point_num * sizeof(double));
 
@@ -228,12 +231,9 @@ bool radiative_transfer::initialise_memory(const ESP &              esp,
         insol_h = (double *)malloc(esp.point_num * sizeof(double));
         cudaMalloc((void **)&insol_d, esp.point_num * sizeof(double));
 
-
         cudaMalloc((void **)&surf_flux_d, esp.point_num * sizeof(double));
 
-
         // Adopting existing parameters used for picket-fence for the Freedman scheme
-
         cudaMalloc((void **)&k_IR_nv_d, esp.nv * esp.point_num * sizeof(double));
         cudaMalloc((void **)&k_V_nv_d, esp.nv * esp.point_num * sizeof(double));
         cudaMalloc((void **)&net_F_nvi_d, esp.nvi * esp.point_num * sizeof(double));
@@ -243,16 +243,30 @@ bool radiative_transfer::initialise_memory(const ESP &              esp,
         cudaMalloc((void **)&OpaTablePressure_d, 1060 * sizeof(double));
         cudaMalloc((void **)&OpaTableKappa_d, 1060 * sizeof(double));
 
-
         k_IR__h = (double *)malloc(esp.nv * esp.point_num * sizeof(double));
         k_V__h  = (double *)malloc(esp.nv * esp.point_num * sizeof(double));
         net_F_h   = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
         AB__h     = (double *)malloc(esp.point_num * sizeof(double));
-
+        
+        // Freedman table arrays
         OpaTableTemperature__h = (double *)malloc(1060 * sizeof(double));
         OpaTablePressure__h    = (double *)malloc(1060 * esp.point_num * sizeof(double));
         OpaTableKappa__h       = (double *)malloc(1060 * esp.point_num * sizeof(double));
 
+        // Tabulated cloud properties
+        T_clouds_tabulated_h = (double *)malloc(n_cloud * N_T * sizeof(double));
+        alpha_R_tabulated_h = (double *)malloc(n_cloud * N_T * sizeof(double));
+        w_R_tabulated_h = (double *)malloc(n_cloud * N_T * sizeof(double));
+        g_R_tabulated_h = (double *)malloc(n_cloud * N_T * sizeof(double));
+        cudaMalloc((void **)&T_clouds_tabulated_d, n_cloud * N_T * sizeof(double));
+        cudaMalloc((void **)&alpha_R_tabulated_d, n_cloud * N_T * sizeof(double));
+        cudaMalloc((void **)&w_R_tabulated_d, n_cloud * N_T * sizeof(double));
+        cudaMalloc((void **)&g_R_tabulated_d, n_cloud *  N_T * sizeof(double));
+        
+        // Rosseland cloud opacities
+        cudaMalloc((void **)&k_Ross_cloud_d, esp.nv * esp.point_num * n_cloud * sizeof(double));
+        // Modified dtau array for the absorption approximation
+        cudaMalloc((void **)&dtau__dff_l_a, esp.nv * esp.point_num * sizeof(double));
 
         // picket fence parameters     //Kitzman working variables
         cudaMalloc((void **)&tau_Ve__df_e, esp.nvi * esp.point_num * sizeof(double));
@@ -271,7 +285,6 @@ bool radiative_transfer::initialise_memory(const ESP &              esp,
 
         lw_net__h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
         sw_net__h = (double *)malloc(esp.nvi * esp.point_num * sizeof(double));
-
 
         // picket fence parameters     // lw_grey_updown_linear working variables
         cudaMalloc((void **)&dtau__dff_l, esp.nv * esp.point_num * sizeof(double));
@@ -329,7 +342,6 @@ bool radiative_transfer::initialise_memory(const ESP &              esp,
 
     return true;
 }
-
 
 bool radiative_transfer::free_memory() {
     // double picket_fence_mod = false;
@@ -423,8 +435,7 @@ bool radiative_transfer::free_memory() {
     }
     else if (rt_type == FREEDMAN) {
 
-        //cuda_check_status_or_exit(__FILE__, __LINE__);
-
+        // Rad Transfer
         cudaFree(phtemp);
         cudaFree(dtemp);
 
@@ -439,12 +450,10 @@ bool radiative_transfer::free_memory() {
         cudaFree(OLR_d);
 
         // Freedman parameters
-
         cudaFree(k_IR_nv_d);
         cudaFree(k_V_nv_d);
         cudaFree(net_F_nvi_d);
         cudaFree(AB_d);
-
 
         free(k_IR__h);
         free(k_V__h);
@@ -458,10 +467,20 @@ bool radiative_transfer::free_memory() {
         cudaFree(OpaTablePressure_d);
         cudaFree(OpaTableKappa_d);
 
+        // Cloud specific parameters
+        free(T_clouds_tabulated_h);
+        free(alpha_R_tabulated_h);
+        free(w_R_tabulated_h);
+        free(g_R_tabulated_h);
+            
+        cudaFree(T_clouds_tabulated_d);
+        cudaFree(alpha_R_tabulated_d);
+        cudaFree(w_R_tabulated_d);
+        cudaFree(g_R_tabulated_d);
+        cudaFree(k_Ross_cloud_d);
+        cudaFree(dtau__dff_l_a);
 
         // picket fence parameters     //Kitzman working variables
-
-
         cudaFree(tau_Ve__df_e);
         cudaFree(tau_IRe__df_e);
         cudaFree(Te__df_e); // as well used for dry convective adjustment
@@ -574,6 +593,7 @@ bool radiative_transfer::initial_conditions(const ESP &            esp,
                 sim.Tmean);
     }
     else if (rt_type == FREEDMAN) {
+
         RTSetup(esp.Tstar,
                 esp.planet_star_dist,
                 esp.radius_star,
@@ -590,6 +610,79 @@ bool radiative_transfer::initial_conditions(const ESP &            esp,
                 esp.f_lw,
                 rt1Dmode_config,
                 sim.Tmean);
+
+        // Read-in tabulated cloud parameters
+        for (int icloud = 0; icloud < n_cloud; icloud++){
+            const int offset = icloud * N_T;
+            printf("Reading cloud tables...");
+            // printf("Current file: %s \n", &cloud_albs_coeff_filenames[icloud]);
+            // Albedos
+            read_cloud_tables(cloud_albs_coeff_filenames[icloud], 
+                              &T_clouds_tabulated_h[offset], 
+                              &w_R_tabulated_h[offset], 
+                              N_T);
+            // Asymmetry factors
+            read_cloud_tables(cloud_asym_coeff_filenames[icloud], 
+                              &T_clouds_tabulated_h[offset], 
+                              &g_R_tabulated_h[offset], 
+                              N_T);
+            // Normalized attenuation extinction coefficients
+            read_cloud_tables(cloud_ext_coeff_filenames[icloud], 
+                              &T_clouds_tabulated_h[offset], 
+                              &alpha_R_tabulated_h[offset], 
+                              N_T);
+
+            // Sanity check
+            // printf("cloud %d  T[0]=%.1f  w_R[0]=%.4g  g_R[0]=%.4g  alpha_R[0]=%.4g\n",
+            //         icloud,
+            //         T_clouds_tabulated_h[offset],
+            //         w_R_tabulated_h[offset],
+            //         g_R_tabulated_h[offset],
+            //         alpha_R_tabulated_h[offset]);
+        }
+        
+        // Copy tabulated arrays into the device
+        cudaError_t cudaStatus;
+        cudaStatus = cudaMemcpy(T_clouds_tabulated_d,
+                                T_clouds_tabulated_h,
+                                n_cloud * N_T * sizeof(double),
+                                cudaMemcpyHostToDevice);
+        if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "T_clouds_tabulated_d cudaMemcpyHostToDevice failed!");
+        //goto Error;
+        }
+        cudaStatus = cudaMemcpy(alpha_R_tabulated_d,
+                                alpha_R_tabulated_h,
+                                n_cloud * N_T * sizeof(double),
+                                cudaMemcpyHostToDevice);
+        if (cudaStatus != cudaSuccess) {
+            fprintf(stderr, "alpha_R_tabulated_d cudaMemcpyHostToDevice failed!");
+            //goto Error;
+        }
+        cudaStatus = cudaMemcpy(w_R_tabulated_d,
+                                w_R_tabulated_h,
+                                n_cloud * N_T * sizeof(double),
+                                cudaMemcpyHostToDevice);
+        if (cudaStatus != cudaSuccess) {
+            fprintf(stderr, "w_R_tabulated_d cudaMemcpyHostToDevice failed!");
+            //goto Error;
+    }     
+        cudaStatus = cudaMemcpy(g_R_tabulated_d,
+                                g_R_tabulated_h,
+                                n_cloud * N_T * sizeof(double),
+                                cudaMemcpyHostToDevice);
+        if (cudaStatus != cudaSuccess) {
+            fprintf(stderr, "g_R_tabulated_d cudaMemcpyHostToDevice failed!");
+            //goto Error;
+        }
+
+        // check for error
+        cudaError_t error = cudaGetLastError();
+        if (error != cudaSuccess) {
+            // print the CUDA error message and exit
+            printf("CUDA error: %s\n", cudaGetErrorString(error));
+            exit(-1);
+        }
     }
     else {
 
@@ -634,306 +727,6 @@ bool radiative_transfer::initial_conditions(const ESP &            esp,
     esp.insolation.set_require();
 
     return returnstatus;
-}
-
-///////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////
-
-
-// Calculates the Bond Albedo according to Parmentier et al. (2015) expression
-void Bond_Parmentier(double Teff0, double grav, double &AB) {
-    // dependcies
-    //// pow from math
-    //// log10 from math
-
-
-    // Input:
-    // Teff0 - Atmospheric profile effective temperature [K] with zero albedo
-    // grav - Surface gravity of planet [m s-2]
-
-    // Call by reference (Input&Output):
-    // AB - Bond albedo
-
-    // work variables
-    double a = 0.0, b = 0.0;
-
-    // start operations
-
-    if (Teff0 <= 250.0) {
-        a = ((double)-0.335) * pow(grav, ((double)0.070));
-        b = 0.0;
-    }
-    else if (Teff0 > 250.0 && Teff0 <= 750.0) {
-        a = -0.335 * pow(grav, ((double)0.070)) + 2.149 * pow(grav, ((double)0.135));
-        b = -0.896 * pow(grav, ((double)0.135));
-    }
-    else if (Teff0 > 750.0 && Teff0 < 1250.0) {
-        a = -0.335 * pow(grav, ((double)0.070)) - 0.428 * pow(grav, ((double)0.135));
-        b = 0.0;
-    }
-    else if (Teff0 >= 1250.0) {
-        a = 16.947 - ((double)3.174) * pow(grav, ((double)0.070))
-            - 4.051 * pow(grav, ((double)0.135));
-        b = -5.472 + ((double)0.917) * pow(grav, ((double)0.070))
-            + 1.170 * pow(grav, ((double)0.135));
-    }
-
-    // Final Bond Albedo expression
-    AB = pow(10.0, (a + b * log10(Teff0)));
-}
-
-
-///////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////
-
-
-void PF_text_file_to_array(std::string name, double *array, int Nlength) {
-
-    std::ifstream inFile;
-    inFile.open(name);
-    if (!inFile) {
-        printf("\nError opening the file: one of the opacity tables \n");
-    }
-    for (int i = 0; i < Nlength; i++) {
-        inFile >> array[i];
-    }
-    inFile.close();
-}
-
-
-///////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////
-
-// Calculates 3 band grey visual gamma values and 2 picket fence IR gamma values
-// according to the coefficents and equations in:
-// Parmentier & Menou (2014) and Parmentier et al. (2015)
-// NOTE: This does not calculate the opacity - call k_Ross_Freedman for that
-void gam_Parmentier(int     nCol,
-                    int     nLev,
-                    double *Teff,
-                    int     table_num,
-                    double *gam_V,
-                    double *Beta_V,
-                    double *Beta,
-                    double *gam_1,
-                    double *gam_2,
-                    double *gam_P) {
-    // dependcies
-    //// pow from math
-    //// log10 from math
-
-
-    // Input:
-    // Teff - Effective temperature [K] (See Parmentier papers for various ways to calculate this)
-    // for non-irradiated atmosphere Teff = Tint
-    // table_num - Table selection from Parmentier et al. (2015): 1 = w. TiO/VO, 2 = w.o. TiO/VO
-
-    // Call by reference (Input&Output):
-    // gam_V(3) - gamma ratio for 3 visual bands (gam_V = kV_Ross/kIR_Ross)
-    // beta_V(3) - fraction of total incident stellar flux in band (1/3 for Parmentier values)
-    // Beta - equilvalent bandwidth for picket fence IR model
-    // gam_1 - gamma ratio for IR band 1 (gam_1 = kIR_1/kIR_Ross)
-    // gam_2 - gamma ratio for IR band 2 (gam_2 = kIR_2/kIR_Ross)
-    // gam_P - gamma ratio for Planck mean (gam_P = kIR_Planck/kIR_Ross)
-    // tau_lim - tau limit variable (usually for IC system)
-
-    // work variables
-    double R   = 0;
-    double aP  = 0;
-    double bP  = 0;
-    double cP  = 0;
-    double aV1 = 0, bV1 = 0, aV2 = 0, bV2 = 0, aV3 = 0, bV3 = 0;
-    double aB = 0, bB = 0;
-    double l10T = 0, l10T2 = 0, RT = 0;
-    int    i;
-
-
-    // start operations
-
-    for (int id = 0; id < nCol; id++) {
-
-        // Log 10 T_eff variables
-        l10T  = log10(Teff[id]);
-        l10T2 = pow(l10T, 2.0);
-
-        if (table_num == 1) {
-            // First table in Parmentier et al. (2015) w. TiO/VO
-            // Start large if statements with visual band and Beta coefficents
-            if (Teff[id] <= 200.0) {
-                aV1 = -5.51;
-                bV1 = 2.48;
-                aV2 = -7.37;
-                bV2 = 2.53;
-                aV3 = -3.03;
-                bV3 = -0.20;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 200.0 && Teff[id] <= 300.0) {
-                aV1 = 1.23;
-                bV1 = -0.45;
-                aV2 = 13.99;
-                bV2 = -6.75;
-                aV3 = -13.87;
-                bV3 = 4.51;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 300.0 && Teff[id] <= 600.0) {
-                aV1 = 8.65;
-                bV1 = -3.45;
-                aV2 = -15.18;
-                bV2 = 5.02;
-                aV3 = -11.95;
-                bV3 = 3.74;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 600.0 && Teff[id] <= 1400.0) {
-                aV1 = -12.96;
-                bV1 = 4.33;
-                aV2 = -10.41;
-                bV2 = 3.31;
-                aV3 = -6.97;
-                bV3 = 1.94;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 1400.0 && Teff[id] < 2000.0) {
-                aV1 = -23.75;
-                bV1 = 7.76;
-                aV2 = -19.95;
-                bV2 = 6.34;
-                aV3 = -3.65;
-                bV3 = 0.89;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] >= 2000.0) {
-                aV1 = 12.65;
-                bV1 = -3.27;
-                aV2 = 13.56;
-                bV2 = -3.81;
-                aV3 = -6.02;
-                bV3 = 1.61;
-                aB  = 6.21;
-                bB  = -1.63;
-            }
-
-            // gam_P coefficents
-            aP = -2.36;
-            bP = 13.92;
-            cP = -19.38;
-        }
-        else if (table_num == 2) {
-            // ! Appendix table from Parmentier et al. (2015) - without TiO and VO
-            if (Teff[id] <= 200.0) {
-                aV1 = -5.51;
-                bV1 = 2.48;
-                aV2 = -7.37;
-                bV2 = 2.53;
-                aV3 = -3.03;
-                bV3 = -0.20;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 200.0 && Teff[id] <= 300.0) {
-                aV1 = 1.23;
-                bV1 = -0.45;
-                aV2 = 13.99;
-                bV2 = -6.75;
-                aV3 = -13.87;
-                bV3 = 4.51;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 300.0 && Teff[id] <= 600.0) {
-                aV1 = 8.65;
-                bV1 = -3.45;
-                aV2 = -15.18;
-                bV2 = 5.02;
-                aV3 = -11.95;
-                bV3 = 3.74;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 600.0 && Teff[id] <= 1400.0) {
-                aV1 = -12.96;
-                bV1 = 4.33;
-                aV2 = -10.41;
-                bV2 = 3.31;
-                aV3 = -6.97;
-                bV3 = 1.94;
-                aB  = 0.84;
-                bB  = 0.0;
-            }
-            else if (Teff[id] > 1400.0 && Teff[id] < 2000.0) {
-                aV1 = -1.68;
-                bV1 = 0.75;
-                aV2 = 6.96;
-                bV2 = -2.21;
-                aV3 = 0.02;
-                bV3 = -0.28;
-                aB  = 3.0;
-                bB  = -0.69;
-            }
-            else if (Teff[id] >= 2000.0) {
-                aV1 = 10.37;
-                bV1 = -2.91;
-                aV2 = -2.4;
-                bV2 = 0.62;
-                aV3 = -16.54;
-                bV3 = 4.74;
-                aB  = 3.0;
-                bB  = -0.69;
-            }
-
-            // gam_P coefficents
-            if (Teff[id] <= 1400.0) {
-                aP = -2.36;
-                bP = 13.92;
-                cP = -19.38;
-            }
-            else {
-                aP = -12.45;
-                bP = 82.25;
-                cP = -134.42;
-            }
-        }
-
-        // Calculation of all values
-        // Visual band gamma
-        gam_V[id * 3 + 0] = pow(10.0, (aV1 + bV1 * l10T));
-        gam_V[id * 3 + 1] = pow(10.0, (aV2 + bV2 * l10T));
-        gam_V[id * 3 + 2] = pow(10.0, (aV3 + bV3 * l10T));
-
-
-        // Visual band fractions
-        for (i = 0; i < 3; i++) {
-            Beta_V[id * 3 + i] = 1.0 / 3.0;
-        }
-
-        // gamma_Planck - if < 1 then make it grey approximation (k_Planck = k_Ross, gam_P = 1)
-        gam_P[id] = pow(10.0, (aP * l10T2 + bP * l10T + cP));
-        if (gam_P[id] < 1.0000001) {
-            gam_P[id] = 1.0000001;
-        }
-
-        // equivalent bandwidth value
-        Beta[id * 2 + 0] = aB + bB * l10T;
-        Beta[id * 2 + 1] = (1.0) - Beta[id * 2 + 0];
-
-        // IR band kappa1/kappa2 ratio - Eq. 96 from Parmentier & Menou (2014)
-        RT = (gam_P[id] - 1.0) / (2.0 * Beta[id * 2 + 0] * Beta[id * 2 + 1]);
-        R  = 1.0 + RT + sqrt(pow(RT, 2.0) + RT);
-
-        // gam_1 and gam_2 values - Eq. 92, 93 from Parmentier & Menou (2014)
-        gam_1[id] = Beta[id * 2 + 0] + R - Beta[id * 2 + 0] * R;
-        gam_2[id] = gam_1[id] / R;
-
-        // Calculate tau_lim parameter -> not anymore needed
-        //tau_lim = 1.0_dp/(gam_1[id]*gam_2[id]) * sqrt(gam_P[id]/3.0_dp);
-    }
 }
 
 bool radiative_transfer::phy_loop(ESP &                  esp,
@@ -1286,7 +1079,6 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
                                         tau_Ve__df_e, //Kitzman working variables
                                         tau_IRe__df_e,
                                         Te__df_e,
-                                        bezier,
                                         be__df_e,
                                         sw_down__df_e,
                                         sw_down_b__df_e,
@@ -1308,6 +1100,16 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
                                         lw_down_g__dff_e,
                                         Gp__dff_l,
                                         Bp__dff_l,
+                                        k_Ross_cloud_d,
+                                        T_clouds_tabulated_d,
+                                        alpha_R_tabulated_d,
+                                        w_R_tabulated_d,
+                                        g_R_tabulated_d,
+                                        dtau__dff_l_a,
+                                        N_T,
+                                        thermal_coupling,
+                                        esp.n_tot_d,
+                                        n_cloud,
                                         rt1Dmode,
                                         sim.DeepModel);
         }
@@ -1395,8 +1197,6 @@ bool radiative_transfer::phy_loop(ESP &                  esp,
 
 bool radiative_transfer::configure(config_file &config_reader) {
 
-    // string rt_type_str("DualbandGray");
-    printf("Default: %s (radiative_transfer.cu)", rt_type_default);
     config_reader.append_config_var("rt_type", rt_type_str, string(rt_type_default));
 
     // basic star-planet properties
@@ -1423,6 +1223,14 @@ bool radiative_transfer::configure(config_file &config_reader) {
     config_reader.append_config_var("n_sw", n_sw_config, n_sw_config);
     config_reader.append_config_var("n_lw", n_lw_config, n_lw_config);
     // config_reader.append_config_var("f_lw", f_lw_config, f_lw_config);
+    
+    // Brown Dwarf simple cloud options
+    config_reader.append_config_var("n_cloud", n_cloud, n_cloud);
+    config_reader.append_config_var("thermal_coupling", thermal_coupling, thermal_coupling);
+    config_reader.append_config_var("cloud_albs_coeff_files", cloud_albs_coeff_filenames, cloud_albs_coeff_filenames);
+    config_reader.append_config_var("cloud_asym_coeff_files", cloud_asym_coeff_filenames, cloud_asym_coeff_filenames);
+    config_reader.append_config_var("cloud_ext_coeff_files", cloud_ext_coeff_filenames, cloud_ext_coeff_filenames);
+    config_reader.append_config_var("N_T", N_T, N_T);
 
     return true;
 }
