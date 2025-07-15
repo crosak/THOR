@@ -96,10 +96,13 @@ $(BUILDDIR)/${OUTPUTDIR}/chemistry.o: chemistry.cu chemistry.h phy_modules.h phy
 	@echo -e '$(YELLOW)creating object file for $@ $(END)'
 	$(CC) $(CC_comp_flag) $(arch)  $(cuda_flags) $(h5include) -I$(includedir) $(INCLUDE_DIRS) $(CDB)  -o $@ $<
 
+$(BUILDDIR)/${OUTPUTDIR}/clouds.o: clouds.cu clouds.h phy_modules.h phy_module_base.h thor_chemistry.h | $(BUILDDIR)/${OUTPUTDIR} $(BUILDDIR)
+	@echo -e '$(YELLOW)creating object file for $@ $(END)'
+	$(CC) $(CC_comp_flag) $(arch)  $(cuda_flags) $(h5include) -I$(includedir) $(INCLUDE_DIRS) $(CDB)  -o $@ $<
+
 $(BUILDDIR)/${OUTPUTDIR}/radiative_transfer.o: radiative_transfer.cu radiative_transfer.h profx_RT.h phy_modules.h phy_module_base.h | $(BUILDDIR)/${OUTPUTDIR} $(BUILDDIR) 
 	@echo -e '$(YELLOW)creating object file for $@ $(END)'
 	$(CC) $(CC_comp_flag) $(arch)  $(cuda_flags) $(h5include) -I$(includedir)  $(INCLUDE_DIRS) $(CDB)  -o $@ $<
-
 
 $(BUILDDIR)/${OUTPUTDIR}/boundary_layer.o: boundary_layer.cu boundary_layer.h phy_modules.h phy_module_base.h | $(BUILDDIR)/${OUTPUTDIR} $(BUILDDIR) 
 	@echo -e '$(YELLOW)creating object file for $@ $(END)'
@@ -110,10 +113,10 @@ $(BUILDDIR)/${OUTPUTDIR}/phy_modules.o: phy_modules.cu phy_modules.h phy_module_
 	$(CC) $(CC_comp_flag) $(arch)  $(cuda_flags) $(h5include) -I$(includedir) $(INCLUDE_DIRS) $(CDB) $(ALFRODULL_FLAGS) -o $@ $<
 
 
-libphy_modules.a: $(BUILDDIR)/${OUTPUTDIR}/chemistry.o $(BUILDDIR)/${OUTPUTDIR}/radiative_transfer.o $(BUILDDIR)/${OUTPUTDIR}/boundary_layer.o $(BUILDDIR)/${OUTPUTDIR}/phy_modules.o | $(BUILDDIR)/${OUTPUTDIR} $(BUILDDIR)
+libphy_modules.a: $(BUILDDIR)/${OUTPUTDIR}/chemistry.o $(BUILDDIR)/${OUTPUTDIR}/radiative_transfer.o $(BUILDDIR)/${OUTPUTDIR}/boundary_layer.o $(BUILDDIR)/${OUTPUTDIR}/clouds.o $(BUILDDIR)/${OUTPUTDIR}/phy_modules.o | $(BUILDDIR)/${OUTPUTDIR} $(BUILDDIR)
 	@echo -e '$(YELLOW)creating $@ $(END)'
 	@echo -e '$(GREEN)Linking Modules into static lib $(END)'
-	ar rcs $@ $(BUILDDIR)/${OUTPUTDIR}/phy_modules.o $(BUILDDIR)/${OUTPUTDIR}/radiative_transfer.o $(BUILDDIR)/${OUTPUTDIR}/boundary_layer.o $(BUILDDIR)/${OUTPUTDIR}/chemistry.o
+	ar rcs $@ $(BUILDDIR)/${OUTPUTDIR}/phy_modules.o $(BUILDDIR)/${OUTPUTDIR}/radiative_transfer.o $(BUILDDIR)/${OUTPUTDIR}/boundary_layer.o $(BUILDDIR)/${OUTPUTDIR}/clouds.o $(BUILDDIR)/${OUTPUTDIR}/chemistry.o
 
 $(ALFCLASS): ;
 

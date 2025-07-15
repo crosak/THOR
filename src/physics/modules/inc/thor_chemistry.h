@@ -27,6 +27,26 @@
 ////////////////////////////////////////////////////////////////////////
 #include "kernel_halo_helpers.h"
 
+__device__ inline double monotonic_half(double qL, 
+                                        double qC,
+                                        double qU,
+                                        double dzL,
+                                        double dzU)
+{   
+    // Variable declarations
+    double dq, dqmL, dqmU, s, ltd;
+    // centered slope
+    dq   = (qU - qL) / (dzL + dzU);
+    
+    // limit with the monotonised-central (MC) limiter
+    dqmL = (qC - qL) / dzL;
+    dqmU = (qU - qC) / dzU;
+    s    = copysign(1.0, dq);
+    ltd  = s * fmin(fmin(fabs(dq), 2.0*fabs(dqmL)), 2.0*fabs(dqmU));
+
+    return qC + 0.5 * ltd * dzU;        // value at upper interface
+}
+
 template<int NX, int NY>
 __global__ void Tracer_Eq(double *tracers_d,
                           double *tracerk_d,
@@ -74,6 +94,8 @@ __global__ void Tracer_Eq(double *tracers_d,
     double altht, althl;
     double dtr_dalt;
 
+    // Monotonic linear construction variables
+    double qC, qU, qL, dzL, dzU;
 
     int ir = 0; // index in region
     int iri, ir2, id;
@@ -158,38 +180,93 @@ __global__ void Tracer_Eq(double *tracers_d,
         nflxtr_s[iri] += rscale * (div0 * v1_s[ir * 3 + k] * tr_s[ir] + div1 * v1_s[pt1 * 3 + k] * tr_s[pt1] + div2 * v1_s[pt2 * 3 + k] * tr_s[pt2] + div3 * v1_s[pt3 * 3 + k] * tr_s[pt3] + div4 * v1_s[pt4 * 3 + k] * tr_s[pt4] + div5 * v1_s[pt5 * 3 + k] * tr_s[pt5] + div6 * v1_s[pt6 * 3 + k] * tr_s[pt6]);
     }
 
+    bool linear = true;
+    
     if (lev == 0) {
         trhl = 0.0;
         xi   = Altitudeh_d[lev + 1];
         xim1 = Altitude_d[lev];
         xip1 = Altitude_d[lev + 1];
-        a    = (xi - xip1) / (xim1 - xip1);
-        b    = (xi - xim1) / (xip1 - xim1);
-        trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev + 1] * b;
+        // Linear reconstruction
+        if (linear){
+            a    = (xi - xip1) / (xim1 - xip1);
+            b    = (xi - xim1) / (xip1 - xim1);
+            trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev + 1] * b;
+        // Monotonic linear construction
+        }else{
+            // gather cell-centre mixing ratios
+            qC = tracerk_d[id*nv*ntr +  lev    *ntr + itr] / Rhok_d[id*nv +  lev    ];
+            qU = tracerk_d[id*nv*ntr + (lev+1) *ntr + itr] / Rhok_d[id*nv +  lev + 1];
+            // we have no qL below the bottom boundary , so use qC for both qL and qC
+            qL = qC;
+            // geometric distances
+            dzL = xi   - xim1;     // to lower centre
+            dzU = xip1 - xi;       // to upper centre
+            // monotone half-level value
+            trht = monotonic_half(qL, qC, qU, dzL, dzU);
+            }
+
     }
     else if (lev == nv - 1) {
+        trht = 0.0;
         xi   = Altitudeh_d[lev];
         xim1 = Altitude_d[lev - 1];
         xip1 = Altitude_d[lev];
-        a    = (xi - xip1) / (xim1 - xip1);
-        b    = (xi - xim1) / (xip1 - xim1);
-        trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
-        trht = 0.0;
+        // Linear reconstruction
+        if (linear){
+            a    = (xi - xip1) / (xim1 - xip1);
+            b    = (xi - xim1) / (xip1 - xim1);
+            trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
+        // Monotonic linear construction
+        }else{
+            // gather cell-centre mixing ratios
+            qC = tracerk_d[id*nv*ntr +  lev    *ntr + itr] / Rhok_d[id*nv +  lev    ];
+            qL = tracerk_d[id*nv*ntr + (lev+1) *ntr + itr] / Rhok_d[id*nv +  lev - 1];
+            // we have no qL above the upper boundary , so use qC for both qU and qC
+            qU = qC;
+            // geometric distances
+            dzL = xi   - xim1;     // to lower centre
+            dzU = xip1 - xi;       // to upper centre
+            // monotone half-level value
+            trht = monotonic_half(qL, qC, qU, dzL, dzU);
+        }
     }
     else {
         xi   = Altitudeh_d[lev];
         xim1 = Altitude_d[lev - 1];
         xip1 = Altitude_d[lev];
-        a    = (xi - xip1) / (xim1 - xip1);
-        b    = (xi - xim1) / (xip1 - xim1);
-        trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
-
+        // Linear reconstruction
+        if (linear){
+            a    = (xi - xip1) / (xim1 - xip1);
+            b    = (xi - xim1) / (xip1 - xim1);
+            trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
+        // Monotonic linear construction
+        }else{
+            qL = tracerk_d[id*nv*ntr + (lev-2)*ntr + itr] / Rhok_d[id*nv + lev-2];
+            qC = tracerk_d[id*nv*ntr + (lev-1)*ntr + itr] / Rhok_d[id*nv + lev-1];
+            qU = tracerk_d[id*nv*ntr +  lev   *ntr + itr] / Rhok_d[id*nv + lev  ];
+            dzL = xi   - xim1;
+            dzU = xip1 - xi;
+            trhl = monotonic_half(qL, qC, qU, dzL, dzU);
+        }
+        
         xi   = Altitudeh_d[lev + 1];
         xim1 = Altitude_d[lev];
         xip1 = Altitude_d[lev + 1];
-        a    = (xi - xip1) / (xim1 - xip1);
-        b    = (xi - xim1) / (xip1 - xim1);
-        trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev + 1] * b;
+        // Linear reconstruction
+        if(linear){
+            a    = (xi - xip1) / (xim1 - xip1);
+            b    = (xi - xim1) / (xip1 - xim1);
+            trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev + 1] * b;
+        // Monotonic linear construction
+        }else{
+            qL = tracerk_d[id*nv*ntr + (lev-1)*ntr + itr] / Rhok_d[id*nv + lev-1];
+            qC = tracerk_d[id*nv*ntr +  lev   *ntr + itr] / Rhok_d[id*nv + lev  ];
+            qU = tracerk_d[id*nv*ntr + (lev+1)*ntr + itr] / Rhok_d[id*nv + lev+1];
+            dzL = xi   - xim1;
+            dzU = xip1 - xi;
+            trht = monotonic_half(qL, qC, qU, dzL, dzU);
+        }
     }
 
     if (lev == 0) {
@@ -206,10 +283,22 @@ __global__ void Tracer_Eq(double *tracers_d,
     dtr      = -(nflxtr_s[iri] + dtr_dalt) * dt;
     r        = Rhok_d[id * nv + lev] + Rho_d[id * nv + lev];
     tr       = tr_s[ir] * r + dtr;
+    // // ----- positivity limiter (simple scaling) -----------------------------
+    // double q_old = tr_s[ir] * r;   // ρ q at the beginning of the step
+    // double q_new = tr;             // predicted ρ q after advection
+
+    // if (q_new < 0.0) {
+    //     // scale the advection tendency so the cell ends exactly at zero
+    //     double alpha = q_old / (q_old - q_new);  // 0 < alpha < 1
+    //     dtr  *= alpha;                           // shrink tendency
+    //     q_new = 0.0;                             // enforce non-negativity
+    //     tr    = q_new;                           // keep variable names consistent
+    // }
+    // // -----------------------------------------------------------------------
 
     tracers_d[id * nv * ntr + lev * ntr + itr] = tr - tr_s[ir] * Rhok_d[id * nv + lev];
 
-    tracers_d[id * nv * ntr + lev * ntr + itr] = tracers_d[id * nv * ntr + lev * ntr + itr] + difftr_d[id * nv * ntr + lev * ntr + itr] * dt;
+    tracers_d[id * nv * ntr + lev * ntr + itr] = tracers_d[id * nv * ntr + lev * ntr + itr]; //+ difftr_d[id * nv * ntr + lev * ntr + itr] * dt;
 }
 
 template<int NN>
@@ -255,6 +344,9 @@ __global__ void Tracer_Eq_Poles(double *tracers_d,
     double xi, xim1, xip1, a, b;
     double dtr_dalt, dtr, tr;
     double r2p, r2m, r2l;
+
+    // Monotonic linear construction variables
+    double qC, qU, qL, dzL, dzU;
 
     if (id < num) {
         for (int i = 0; i < 5; i++) local_p[i] = point_local_d[id * 6 + i];
@@ -305,38 +397,93 @@ __global__ void Tracer_Eq_Poles(double *tracers_d,
                 wht = Wh_d[id * (nv + 1) + lev + 1] + Whk_d[id * (nv + 1) + lev + 1];
             }
 
+            bool linear = true;
+    
             if (lev == 0) {
                 trhl = 0.0;
                 xi   = Altitudeh_d[lev + 1];
                 xim1 = Altitude_d[lev];
                 xip1 = Altitude_d[lev + 1];
-                a    = (xi - xip1) / (xim1 - xip1);
-                b    = (xi - xim1) / (xip1 - xim1);
-                trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev] * b;
+                // Linear reconstruction
+                if (linear){
+                    a    = (xi - xip1) / (xim1 - xip1);
+                    b    = (xi - xim1) / (xip1 - xim1);
+                    trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev + 1] * b;
+                // Monotonic linear construction
+                }else{
+                    // gather cell-centre mixing ratios
+                    qC = tracerk_d[id*nv*ntr +  lev    *ntr + itr] / Rhok_d[id*nv +  lev    ];
+                    qU = tracerk_d[id*nv*ntr + (lev+1) *ntr + itr] / Rhok_d[id*nv +  lev + 1];
+                    // we have no qL below the bottom boundary , so use qC for both qL and qC
+                    qL = qC;
+                    // geometric distances
+                    dzL = xi   - xim1;     // to lower centre
+                    dzU = xip1 - xi;       // to upper centre
+                    // monotone half-level value
+                    trht = monotonic_half(qL, qC, qU, dzL, dzU);
+                    }
+
             }
             else if (lev == nv - 1) {
+                trht = 0.0;
                 xi   = Altitudeh_d[lev];
                 xim1 = Altitude_d[lev - 1];
                 xip1 = Altitude_d[lev];
-                a    = (xi - xip1) / (xim1 - xip1);
-                b    = (xi - xim1) / (xip1 - xim1);
-                trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
-                trht = 0.0;
+                // Linear reconstruction
+                if (linear){
+                    a    = (xi - xip1) / (xim1 - xip1);
+                    b    = (xi - xim1) / (xip1 - xim1);
+                    trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
+                // Monotonic linear construction
+                }else{
+                    // gather cell-centre mixing ratios
+                    qC = tracerk_d[id*nv*ntr +  lev    *ntr + itr] / Rhok_d[id*nv +  lev    ];
+                    qL = tracerk_d[id*nv*ntr + (lev+1) *ntr + itr] / Rhok_d[id*nv +  lev - 1];
+                    // we have no qL above the upper boundary , so use qC for both qU and qC
+                    qU = qC;
+                    // geometric distances
+                    dzL = xi   - xim1;     // to lower centre
+                    dzU = xip1 - xi;       // to upper centre
+                    // monotone half-level value
+                    trht = monotonic_half(qL, qC, qU, dzL, dzU);
+                }
             }
             else {
                 xi   = Altitudeh_d[lev];
                 xim1 = Altitude_d[lev - 1];
                 xip1 = Altitude_d[lev];
-                a    = (xi - xip1) / (xim1 - xip1);
-                b    = (xi - xim1) / (xip1 - xim1);
-                trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
-
+                // Linear reconstruction
+                if (linear){
+                    a    = (xi - xip1) / (xim1 - xip1);
+                    b    = (xi - xim1) / (xip1 - xim1);
+                    trhl = tracerk_d[id * nv * ntr + (lev - 1) * ntr + itr] / Rhok_d[id * nv + lev - 1] * a + tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * b;
+                // Monotonic linear construction
+                }else{
+                    qL = tracerk_d[id*nv*ntr + (lev-2)*ntr + itr] / Rhok_d[id*nv + lev-2];
+                    qC = tracerk_d[id*nv*ntr + (lev-1)*ntr + itr] / Rhok_d[id*nv + lev-1];
+                    qU = tracerk_d[id*nv*ntr +  lev   *ntr + itr] / Rhok_d[id*nv + lev  ];
+                    dzL = xi   - xim1;
+                    dzU = xip1 - xi;
+                    trhl = monotonic_half(qL, qC, qU, dzL, dzU);
+                }
+                
                 xi   = Altitudeh_d[lev + 1];
                 xim1 = Altitude_d[lev];
                 xip1 = Altitude_d[lev + 1];
-                a    = (xi - xip1) / (xim1 - xip1);
-                b    = (xi - xim1) / (xip1 - xim1);
-                trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev + 1] * b;
+                // Linear reconstruction
+                if(linear){
+                    a    = (xi - xip1) / (xim1 - xip1);
+                    b    = (xi - xim1) / (xip1 - xim1);
+                    trht = tracerk_d[id * nv * ntr + lev * ntr + itr] / Rhok_d[id * nv + lev] * a + tracerk_d[id * nv * ntr + (lev + 1) * ntr + itr] / Rhok_d[id * nv + lev + 1] * b;
+                // Monotonic linear construction
+                }else{
+                    qL = tracerk_d[id*nv*ntr + (lev-1)*ntr + itr] / Rhok_d[id*nv + lev-1];
+                    qC = tracerk_d[id*nv*ntr +  lev   *ntr + itr] / Rhok_d[id*nv + lev  ];
+                    qU = tracerk_d[id*nv*ntr + (lev+1)*ntr + itr] / Rhok_d[id*nv + lev+1];
+                    dzL = xi   - xim1;
+                    dzU = xip1 - xi;
+                    trht = monotonic_half(qL, qC, qU, dzL, dzU);
+                }
             }
 
             dz       = altht - althl;
@@ -345,9 +492,22 @@ __global__ void Tracer_Eq_Poles(double *tracers_d,
             r        = Rhok_d[id * nv + lev] + Rho_d[id * nv + lev];
             tr       = tr_p[0] * r + dtr;
 
+            // // ----- positivity limiter (simple scaling) -----------------------------
+            // double q_old = tr_p[0] * r;   // ρ q at the beginning of the step
+            // double q_new = tr;            // predicted ρ q after advection
+
+            // if (q_new < 0.0) {
+            //     // scale the advection tendency so the cell ends exactly at zero
+            //     double alpha = q_old / (q_old - q_new);  // 0 < alpha < 1
+            //     dtr  *= alpha;                           // shrink tendency
+            //     q_new = 0.0;                             // enforce non-negativity
+            //     tr    = q_new;                           // keep variable names consistent
+            // }
+            // // -----------------------------------------------------------------------
+
             tracers_d[id * nv * ntr + lev * ntr + itr] = tr - tr_p[0] * Rhok_d[id * nv + lev];
 
-            tracers_d[id * nv * ntr + lev * ntr + itr] = tracers_d[id * nv * ntr + lev * ntr + itr] + difftr_d[id * nv * ntr + lev * ntr + itr] * dt;
+            tracers_d[id * nv * ntr + lev * ntr + itr] = tracers_d[id * nv * ntr + lev * ntr + itr]; //+ difftr_d[id * nv * ntr + lev * ntr + itr] * dt;
 
             if (lev != nv - 1) {
                 althl = altht;

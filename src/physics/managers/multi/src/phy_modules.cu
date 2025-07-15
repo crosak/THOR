@@ -10,6 +10,7 @@
 #include "chemistry.h"
 #include "log_writer.h"
 #include "radiative_transfer.h"
+#include "clouds.h"
 
 #include <math.h>
 #include <memory>
@@ -32,6 +33,11 @@ const bool boundary_layer_enabled_default = false;
 
 boundary_layer bl;
 
+bool       clouds_enabled         = false;
+const bool clouds_enabled_default = false;
+
+clouds cloud;
+
 #ifdef HAS_ALFRODULL
 #    include "two_streams_radiative_transfer.h"
 
@@ -46,20 +52,24 @@ std::string phy_modules_get_name() {
 }
 
 void phy_modules_print_config() {
-    log::printf("  multi physics module, with radiative transfer, chemistry, boundary layer\n");
-    log::printf("   Radiative Transfer module: %s.\n",
-                radiative_transfer_enabled ? "true" : "false");
+    log::printf("   multi physics module, with radiative transfer, chemistry, boundary layer, clouds\n");
+    log::printf("   Radiative Transfer module: %s.\n", radiative_transfer_enabled ? "true" : "false");
+    log::printf("   Chemistry module: %s.\n", chemistry_enabled ? "true" : "false");
     log::printf("   Boundary Layer module: %s.\n", boundary_layer_enabled ? "true" : "false");
+    log::printf("   Cloud module: %s.\n", clouds_enabled ? "true" : "false");
     log::printf("\n");
 
     if (radiative_transfer_enabled)
         rt.print_config();
-
-    log::printf("   Chemistry module: %s.\n", chemistry_enabled ? "true" : "false");
+        
     if (chemistry_enabled)
         chem.print_config();
+
     if (boundary_layer_enabled)
         bl.print_config();
+
+    if (clouds_enabled)
+        cloud.print_config();
 
 #ifdef HAS_ALFRODULL
     log::printf("   Two Stream Radiative Transfer module: %s.\n",
@@ -82,6 +92,8 @@ bool phy_modules_init_mem(const ESP& esp, device_RK_array_manager& phy_modules_c
         chem.initialise_memory(esp, phy_modules_core_arrays);
     if (boundary_layer_enabled)
         bl.initialise_memory(esp, phy_modules_core_arrays);
+    if (clouds_enabled)
+        cloud.initialise_memory(esp, phy_modules_core_arrays);
 
 #ifdef HAS_ALFRODULL
     if (alfrodull_enabled)
@@ -108,6 +120,9 @@ bool phy_modules_init_data(const ESP& esp, const SimulationSetup& sim, storage* 
     if (chemistry_enabled)
         out &= chem.initial_conditions(esp, sim, s);
 
+    if (clouds_enabled)
+        out &= cloud.initial_conditions(esp, sim, s);
+
 #ifdef HAS_ALFRODULL
     if (alfrodull_enabled)
         out &= tsrt.initial_conditions(esp, sim, s);
@@ -133,6 +148,11 @@ bool phy_modules_generate_config(config_file& config_reader) {
 
     bl.configure(config_reader);
 
+    config_reader.append_config_var(
+        "clouds", clouds_enabled, clouds_enabled_default);
+
+    cloud.configure(config_reader);
+
 
 #ifdef HAS_ALFRODULL
     config_reader.append_config_var(
@@ -148,6 +168,8 @@ bool phy_modules_dyn_core_loop_init(const ESP& esp) {
 
     if (chemistry_enabled)
         chem.dyn_core_loop_init(esp);
+    if (clouds_enabled)
+        cloud.dyn_core_loop_init(esp);
 
     return true;
 }
@@ -159,6 +181,10 @@ bool phy_modules_dyn_core_loop_slow_modes(const ESP&             esp,
 
     if (chemistry_enabled)
         chem.dyn_core_loop_slow_modes(esp, sim, nstep, times);
+    
+    // if (clouds_enabled)
+    //     cloud.dyn_core_loop_slow_modes(esp, sim, nstep, times);
+
 
     return true;
 }
@@ -170,6 +196,9 @@ bool phy_modules_dyn_core_loop_fast_modes(const ESP&             esp,
 
     if (chemistry_enabled)
         chem.dyn_core_loop_fast_modes(esp, sim, nstep, time_step);
+    
+    if (clouds_enabled)
+        cloud.dyn_core_loop_fast_modes(esp, sim, nstep, time_step);
 
     return true;
 }
@@ -178,6 +207,9 @@ bool phy_modules_dyn_core_loop_end(const ESP& esp) {
 
     if (chemistry_enabled)
         chem.dyn_core_loop_end(esp);
+
+    if (clouds_enabled)
+        cloud.dyn_core_loop_end(esp);
 
     return true;
 }
@@ -193,6 +225,9 @@ bool phy_modules_phy_loop(ESP&                   esp,
 
     if (chemistry_enabled)
         chem.phy_loop(esp, sim, diag, nstep, time_step);
+
+    if (clouds_enabled)
+        cloud.phy_loop(esp, sim, diag, nstep, time_step);
 
     if (boundary_layer_enabled)
         bl.phy_loop(esp, sim, diag, nstep, time_step);
@@ -231,10 +266,15 @@ bool phy_modules_store_init(storage& s) {
     // store state of chemistry variables, so that we know it was disabled
     chem.store_init(s);
 
-    s.append_value(
-        boundary_layer_enabled ? 1.0 : 0.0, "/boundary_layer", "-", "Using boundary layer");
+    s.append_value(boundary_layer_enabled ? 1.0 : 0.0, "/boundary_layer", "-", "Using boundary layer");
 
     bl.store_init(s);
+
+    // clouds option
+    s.append_value(clouds_enabled ? 1.0 : 0.0, "/clouds", "-", "Using simple clouds");
+
+    // store state of cloud variables
+    cloud.store_init(s);
 
 #ifdef HAS_ALFRODULL
 
@@ -259,6 +299,9 @@ bool phy_modules_store(const ESP& esp, storage& s) {
 
     if (boundary_layer_enabled)
         bl.store(esp, s);
+    
+    if (clouds_enabled)
+        cloud.store(esp, s);
 
 #ifdef HAS_ALFRODULL
     if (alfrodull_enabled)
@@ -275,11 +318,12 @@ bool phy_modules_free_mem() {
 
     if (radiative_transfer_enabled)
         rt.free_memory();
-
     if (chemistry_enabled)
         chem.free_memory();
     if (boundary_layer_enabled)
-        bl.free_memory();
+        bl.free_memory();    
+    if (clouds_enabled)
+        cloud.free_memory();
 
 #ifdef HAS_ALFRODULL
     if (alfrodull_enabled)

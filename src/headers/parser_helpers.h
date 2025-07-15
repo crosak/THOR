@@ -49,6 +49,10 @@
 
 #include <iostream>
 
+#include <sstream>
+#include <vector>
+
+
 // To compile without regex lib
 //#define NO_REGEX_SUPPORT
 
@@ -329,9 +333,9 @@ template<> inline bool parse_data(const string& value, double& target) {
 #ifdef NO_REGEX_SUPPORT
     try {
         target = std::stod(value);
-
         return true;
     } catch (...) {
+        std::cerr << "Failed to parse double: [" << value << "]" << std::endl; // Debugging output
         return false;
     }
 
@@ -354,21 +358,93 @@ template<> inline bool parse_data(const string& value, double& target) {
 // string template specialisation
 template<> inline bool parse_data(const string& value, string& target) {
     target = value;
-
+    std::cout << "Parsed string value: [" << target << "]" << std::endl; // Debugging output
     return true;
 }
 
+template<> inline bool parse_data(const std::string& value, std::vector<std::string>& target) {
+    target.clear();
+    std::istringstream ss(value);
+    std::string item;
+
+    // Split on commas and remove any extra whitespace from each item
+    while (std::getline(ss, item, ',')) {
+        item.erase(0, item.find_first_not_of(" \t"));  // Left trim
+        item.erase(item.find_last_not_of(" \t") + 1);  // Right trim
+        target.push_back(item);
+    }
+
+    // Debug output for verification
+    std::cout << "Parsed vector<string> successfully: [";
+    for (const auto& str : target) {
+        std::cout << str << " ";
+    }
+    std::cout << "]" << std::endl;
+
+    return !target.empty();  // Return true if at least one element was parsed
+}
+
+template<> inline bool parse_data(const std::string& value, std::vector<double>& target) {
+    target.clear();
+    std::istringstream ss(value);
+    std::string item;
+
+    try {
+        while (std::getline(ss, item, ',')) {
+            // Trim whitespace from each item
+            item.erase(0, item.find_first_not_of(" \t"));
+            item.erase(item.find_last_not_of(" \t") + 1);
+            target.push_back(std::stod(item));
+        }
+        std::cout << "Parsed vector<double> successfully: [";
+        for (const auto& num : target) {
+            std::cout << num << " ";
+        }
+        std::cout << "]" << std::endl;
+        return !target.empty();
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to parse vector<double>: [" << value << "], error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 // Conversion from value to string, recognising input type
-template<typename T> inline string to_strg(T& val) {
+// template<typename T> inline string to_strg(T& val) {
+//     return std::to_string(val);
+// }
+// template<> inline string to_strg(string& val) {
+//     return val;
+// }
+// template<> inline string to_strg(bool& val) {
+//     return val ? "1" : "0";
+// }
+
+// Base template function for to_strg, using std::to_string for scalars
+template<typename T> inline std::string to_strg(T& val) {
     return std::to_string(val);
 }
-template<> inline string to_strg(string& val) {
+
+// Specialization for std::string type
+template<> inline std::string to_strg(std::string& val) {
     return val;
 }
-template<> inline string to_strg(bool& val) {
+
+// Specialization for bool type
+template<> inline std::string to_strg(bool& val) {
     return val ? "1" : "0";
 }
 
+// Specialization for std::vector<T> to handle vectors (e.g., vector<string> and vector<double>)
+template<typename T> inline std::string to_strg(std::vector<T>& vec) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < vec.size(); ++i) {
+        oss << to_strg(vec[i]); // Recursively call to_strg for each element
+        if (i != vec.size() - 1) {
+            oss << ", ";
+        }
+    }
+    return oss.str();
+}
 
 // helpers to check coherence of input
 template<typename T> bool check_greater(string name, T val, T min_) {

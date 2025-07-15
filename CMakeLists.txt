@@ -147,6 +147,7 @@ set(SRC
   src/physics/modules/src/radiative_transfer.cu
   src/physics/modules/src/boundary_layer.cu
   src/physics/modules/src/chemistry.cu
+  src/physics/modules/src/clouds.cu
   src/utils/diagnostics.cu
   )
 
