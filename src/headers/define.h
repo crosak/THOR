@@ -181,7 +181,7 @@ enum benchmark_types {
 };
 
 
-enum init_PT_profile_types { ISOTHERMAL = 0, GUILLOT = 1, CONSTBV = 2, PARMENTIER = 3, BDISOTHERMAL = 4 };
+enum init_PT_profile_types { ISOTHERMAL = 0, GUILLOT = 1, CONSTBV = 2, PARMENTIER = 3, EDDINGTON = 4 };
 
 enum radiative_transfer_types { DUALBANDGRAY = 0, PICKETFENCE = 1, FREEDMAN = 2 };
 

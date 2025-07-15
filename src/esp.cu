@@ -376,7 +376,7 @@ int main(int argc, char** argv) {
     string core_benchmark_str("HeldSuarez");
     config_reader.append_config_var(
         "core_benchmark", core_benchmark_str, string(core_benchmark_default)); //
-    
+
     // Convective adjustment options
     string conv_adj_type_str("hourdin");
     config_reader.append_config_var("conv_adj", sim.conv_adj, conv_adj_default);
@@ -386,7 +386,7 @@ int main(int argc, char** argv) {
     config_reader.append_config_var(
         "conv_adj_type", conv_adj_type_str, string(conv_adj_type_default));
     config_reader.append_config_var("mlt_timestep", sim.mlt_timestep, mlt_timestep_default);
-        
+
     // Thermal perturbation options
     config_reader.append_config_var(
         "thermal_perturb", sim.thermal_perturb, thermal_perturb_default);
@@ -425,7 +425,7 @@ int main(int argc, char** argv) {
     config_reader.append_config_var("custom_log_n_out", custom_log_n_out, custom_log_n_out_default);
     int log_n_out = sim.n_out;
     config_reader.append_config_var("log_n_out", log_n_out, log_n_out_default);
-    
+
     // Radiative Transfer Type
     string rt_type_str("DualbandGray");
     config_reader.append_config_var("rt_type", rt_type_str, string(rt_type_default));
@@ -491,7 +491,7 @@ int main(int argc, char** argv) {
     // properties for a solid/liquid surface
     double Csurf_config = 1e7; // heat capacity of surface (J K^-1 m^-2)
     config_reader.append_config_var("Csurf", Csurf_config, Csurf_config);
-
+    
     // Cloud module
     int n_cloud;
     config_reader.append_config_var("n_cloud", n_cloud, n_cloud_default);
@@ -695,8 +695,8 @@ int main(int argc, char** argv) {
         init_PT_profile = CONSTBV;
         config_OK &= true;
     }
-    else if (init_PT_profile_str == "freedman") {
-        init_PT_profile = BDISOTHERMAL;
+    else if (init_PT_profile_str == "eddington") {
+        init_PT_profile = EDDINGTON;
         config_OK &= true;
     }
     else {
@@ -717,7 +717,7 @@ int main(int argc, char** argv) {
         config_OK &= true;
     }
     else if (rt_type_str == "Freedman" || rt_type_str == "FR") {
-        // printf("Assignment successful!"); 
+        // printf("Assignment successful!");
         rt_type = FREEDMAN;
         config_OK &= true;
     }

@@ -549,7 +549,7 @@ __host__ bool ESP::initial_values(const std::string &initial_conditions_filename
             //
             //          Initial conditions for an isothermal Atmosphere
             //
-            if ((init_PT_profile == ISOTHERMAL || init_PT_profile == CONSTBV || init_PT_profile == BDISOTHERMAL)
+            if ((init_PT_profile == ISOTHERMAL || init_PT_profile == CONSTBV)
                 && ultrahot_thermo == NO_UH_THERMO) {
                 //isothermal initial profile, no variation in Rd or Cp due to H-H2 reaction
                 //exact solution to hydrostatic equation
@@ -910,6 +910,20 @@ __host__ bool ESP::initial_values(const std::string &initial_conditions_filename
                         if (init_PT_profile == ISOTHERMAL) {
                             temperature_h[i * nv + lev] = sim.Tmean;
                         }
+                        else if(init_PT_profile == EDDINGTON){
+                            // Eddington relation for a plane-parallel gray stellar atmosphere
+                            // Tmean, which corresponds to Tirr in Guillot+2010 Eq. 27 is set
+                            // to 1.0, i.e., a very small number.
+                            temperature_h[i * nv + lev] = guillot_T(sim.P_Ref,
+                                                                    mu,
+                                                                    0.0,
+                                                                    sim.P_Ref,
+                                                                    g_L,
+                                                                    Tint,
+                                                                    f_lw,
+                                                                    kappa_sw,
+                                                                    kappa_lw);
+                        }
                         else {
                             temperature_h[i * nv + lev] = guillot_T(sim.P_Ref,
                                                                     mu,
@@ -993,6 +1007,20 @@ __host__ bool ESP::initial_values(const std::string &initial_conditions_filename
                         pressure_h[i * nv + lev] = pressure_h[i * nv + lev] - f / df;
                         if (init_PT_profile == ISOTHERMAL) {
                             temperature_h[i * nv + lev] = sim.Tmean;
+                        }
+                        else if(init_PT_profile == EDDINGTON){
+                            // Eddington relation for a plane-parallel gray stellar atmosphere
+                            // Tmean, which corresponds to Tirr in Guillot+2010 Eq. 27 is set
+                            // to 1.0, i.e., a very small number.
+                            temperature_h[i * nv + lev] = guillot_T(pressure_h[i * nv + lev],
+                                                                    mu,
+                                                                    0.0,
+                                                                    sim.P_Ref,
+                                                                    g,
+                                                                    Tint,
+                                                                    f_lw,
+                                                                    kappa_sw,
+                                                                    kappa_lw);
                         }
                         else {
                             temperature_h[i * nv + lev] = guillot_T(pressure_h[i * nv + lev],
