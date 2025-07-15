@@ -341,15 +341,8 @@ __host__ void ESP::alloc_data(bool globdiag,
         // Vertical thermal convective flux [W/m^2]
         cudaMalloc((void **)&F_conv_d, nv * point_num * sizeof(double));
         cudaMalloc((void **)&F_convh_d, nvi * point_num * sizeof(double));
-        // Vertical gradient of the thermal convective flux [W/m^3]
-        cudaMalloc((void **)&dFdz_d, nv * point_num * sizeof(double));
-        // Temperature tendency due to MLT [K/s]
-        cudaMalloc((void **)&dTempdt_mlt_d, nv * point_num * sizeof(double)); 
         // Lapse rate [K/m]
         cudaMalloc((void **)&lapse_rate_d, nv * point_num * sizeof(double));
-        // Interpolation variables
-        // cudaMalloc((void **)&xp_column_d, nv * sizeof(double));
-        // cudaMalloc((void **)&fp_column_d, nv * point_num * sizeof(double));
         // Temporary storage array for calculations
         cudaMalloc((void **)&tempcolumn_d, nv * point_num * sizeof(double));
         cudaMalloc((void **)&pcolumn_d, nv * point_num * sizeof(double));
@@ -1716,11 +1709,6 @@ __host__ ESP::~ESP() {
     cudaFree(GibbsdG_d);
 
     // thermal perturbations
-    // free(thermpert_h);
-    // free(bforce_h);
-    // free(bturb_h);
-    // free(PM_h);
-    // free(state_h);
     cudaFree(thermpert_d);
     cudaFree(bforce_d);
     cudaFree(bturb_d);

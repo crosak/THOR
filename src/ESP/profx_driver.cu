@@ -290,35 +290,34 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
         }
         else if (conv_adj_type == MIXING_LENGTH){
             
-            mixing_length_adj<<<NBRT, NTH>>>(pressure_d, // Pressure [Pa]
-                                             pressureh_d,
-                                             temperature_d, // Temperature [K]
-                                             temperatureh_d,
+            mixing_length_adj<<<NBRT, NTH>>>(pressure_d,    // Pressure [Pa]
+                                             temperature_d, // Temperature [K] - layers
+                                             temperatureh_d,// Temperature [K] - levels
                                              profx_Qheat_d,
                                              pt_d,          // Pot. temperature [K]
                                              Rho_d,         // Density [m^3/kg]
                                              Cp_d,          // Specific heat capacity [J/kg/K]
                                              Rd_d,          // Gas constant [J/kg/K]
                                              sim.Gravit,    // Gravity [m/s^2]
-                                             Altitude_d,    // Altitudes of the layers
-                                             Altitudeh_d,   // Altitudes of the interfaces
+                                             sim.A,         // Radius [m]
+                                             Altitude_d,    // Altitudes of the layers [m]
+                                             Altitudeh_d,   // Altitudes of the interfaces [m]
                                              Kzz_d,         // Eddy diffusion coefficient
                                              Kzz_ov_d,
-                                             F_conv_d,      // Vertical thermal convective flux [W/m^2]
-                                             F_convh_d,     // Vertical thermal convective flux at interfaces [W/m^2]
-                                             dFdz_d,        // Vertical gradient of the thermal convective flux [W/m^3]
-                                             dTempdt_mlt_d, // Temperature tendency due to MLT [K/s]    
+                                             F_conv_d,      // Vertical thermal convective flux [W/m^2] - layers
+                                             F_convh_d,     // Vertical thermal convective flux [W/m^2] - levels
                                              lapse_rate_d,  // Lapse rate [K/m]
-                                            //  fp_column_d, 
                                              tempcolumn_d, 
                                              pcolumn_d,
+                                             sim.mlt_timestep,
                                              timestep,
-                                             sim.A,
                                              sim.soft_adjustment,
                                              point_num, // Number of columns
                                              nv,
                                              sim.GravHeightVar);
-            // cuda_check_status_or_exit(__FILE__, __LINE__);
+            cudaDeviceSynchronize();
+            cudaMemcpy(Kzz_h, Kzz_d, point_num * nv * sizeof(double), cudaMemcpyDeviceToHost);
+            cuda_check_status_or_exit(__FILE__, __LINE__);
         }
         else{
             // Throw an error

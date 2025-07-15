@@ -469,6 +469,10 @@ __host__ void ESP::output(int                    fidx, // Index of output file
         s.append_table(Wh_mean_h, nvi * point_num, "/Wh_mean", "kg m/s", "Mean Vertical Momentum");
     }
 
+    if (conv_adj_type == MIXING_LENGTH){
+        s.append_table(Kzz_h, nv * point_num, "/Kzz", "m^2 s^-1", "Vertical diffusion coefficient");
+    }
+
     s.append_table(Rd_h, nv * point_num, "/Rd", "J/K/kg", "Local gas constant");
     s.append_table(Cp_h, nv * point_num, "/Cp", "J/K/kg", "Local heat capacity");
 

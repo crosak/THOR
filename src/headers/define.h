@@ -121,10 +121,11 @@
 // number of times to execute per time step
 // (repeats entire algorithm if > 1)
 #define conv_adj_iter_default 1
-#define soft_adjustment_default false
+#define soft_adjustment_default true
 #define conv_adj_type_default "hourdin"
 // true = soft adjustment: calculate tendencies due to convection, forward to dyn core
 // false = hard adjustment: force profiles to neutral during profx step
+#define mlt_timestep_default 0.5
 
 // Radiative transfer options
 #define rt_type_default "DualbandGray"
@@ -189,4 +190,4 @@ enum raysp_calc_mode_types { IMP = 0, EXP1 = 1, EXP3 = 2 };
 
 enum thermo_equation_types { ENTROPY = 0, ENERGY = 1 }; //might add pressure?
 
-enum conv_adj_types { HOURDIN = 0, RAYPH = 1 , MIXING_LENGTH = 3};
+enum conv_adj_types { HOURDIN = 0, RAYPH = 1 , MIXING_LENGTH = 3 };
