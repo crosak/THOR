@@ -626,9 +626,6 @@ __global__ void mixing_length_adj(double *Pressure_d,     // Pressure (cell cent
                 profx_Qheat_d[id * nv + lev] += (Cp_d[id * nv + lev] - Rd_d[id * nv + lev])
                                                 / Rd_d[id * nv + lev]
                                                 * (Ptmp - Pressure_d[id * nv + lev]) / time_step;
-                if (id == 0) {
-                    printf("Correction Q_heat = %.3e | lev =  %d \n",  profx_Qheat_d[id * nv + lev], lev);
-                }
             }
         }
         // Hard adjust the pressure and the pot. temperature directly using the calculated temperature

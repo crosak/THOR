@@ -1990,10 +1990,9 @@ __device__ void lw_grey_updown_linear_freedman(int     id,
 
             if (g_R_tot_d > 1.0e-6) {
 
-                fc  = pow(g_R_tot_d, nstr);   // Wiscombe weight
-                pm2 = pow(g_R_tot_d, nstr+1); // next moment
+                fc  = pow(g_R_tot_d, nstr);  
+                pm2 = pow(g_R_tot_d, nstr+1); 
 
-                // Variant-C tweak to conserve 2nd moment
                 sigma2 = ((nstr+1.0)*(nstr+1.0) - nstr*nstr) / log( (fc*fc)/(pm2*pm2) );
                 fc *= exp(nstr*nstr / (2.0*sigma2));
 
@@ -2008,10 +2007,6 @@ __device__ void lw_grey_updown_linear_freedman(int     id,
 
             // Modified optical depth for transmission function
             dtau__dff_l_a[id * nlay + lev] = eps * tau_tilde;
-            if (id == 0){
-                printf("k_IR = %.3e | dtau__dff_l = %.3e | dtau__dff_l_a = %.3e | eps = %.3e  | lev = %d \n",
-                        k_IR_nv_d[id * nlay + lev], dtau__dff_l[id * nlay + lev], dtau__dff_l_a[id * nlay + lev], eps, lev);
-            }
         }
     }
     // Zero the flux arrays
