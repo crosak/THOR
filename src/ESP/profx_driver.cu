@@ -290,31 +290,59 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
         }
         else if (conv_adj_type == MIXING_LENGTH){
             
-            mixing_length_adj<<<NBRT, NTH>>>(pressure_d,    // Pressure [Pa]
-                                             temperature_d, // Temperature [K] - layers
-                                             temperatureh_d,// Temperature [K] - levels
-                                             profx_Qheat_d,
-                                             pt_d,          // Pot. temperature [K]
-                                             Rho_d,         // Density [m^3/kg]
-                                             Cp_d,          // Specific heat capacity [J/kg/K]
-                                             Rd_d,          // Gas constant [J/kg/K]
-                                             sim.Gravit,    // Gravity [m/s^2]
-                                             sim.A,         // Radius [m]
-                                             Altitude_d,    // Altitudes of the layers [m]
-                                             Altitudeh_d,   // Altitudes of the interfaces [m]
-                                             Kzz_d,         // Eddy diffusion coefficient
-                                             Kzz_ov_d,
-                                             F_conv_d,      // Vertical thermal convective flux [W/m^2] - layers
-                                             F_convh_d,     // Vertical thermal convective flux [W/m^2] - levels
-                                             lapse_rate_d,  // Lapse rate [K/m]
-                                             tempcolumn_d, 
-                                             pcolumn_d,
-                                             sim.mlt_timestep,
-                                             timestep,
-                                             sim.soft_adjustment,
-                                             point_num, // Number of columns
-                                             nv,
-                                             sim.GravHeightVar);
+            // mixing_length_adj<<<NBRT, NTH>>>(pressure_d,    // Pressure [Pa]
+            //                                  temperature_d, // Temperature [K] - layers
+            //                                  temperatureh_d,// Temperature [K] - levels
+            //                                  profx_Qheat_d,
+            //                                  pt_d,          // Pot. temperature [K]
+            //                                  Rho_d,         // Density [m^3/kg]
+            //                                  Cp_d,          // Specific heat capacity [J/kg/K]
+            //                                  Rd_d,          // Gas constant [J/kg/K]
+            //                                  sim.Gravit,    // Gravity [m/s^2]
+            //                                  sim.A,         // Radius [m]
+            //                                  Altitude_d,    // Altitudes of the layers [m]
+            //                                  Altitudeh_d,   // Altitudes of the interfaces [m]
+            //                                  Kzz_d,         // Eddy diffusion coefficient
+            //                                  Kzz_ov_d,
+            //                                  F_conv_d,      // Vertical thermal convective flux [W/m^2] - layers
+            //                                  F_convh_d,     // Vertical thermal convective flux [W/m^2] - levels
+            //                                  lapse_rate_d,  // Lapse rate [K/m]
+            //                                  tempcolumn_d, 
+            //                                  pcolumn_d,
+            //                                  sim.mlt_timestep,
+            //                                  timestep,
+            //                                  sim.soft_adjustment,
+            //                                  point_num, // Number of columns
+            //                                  nv,
+            //                                  sim.GravHeightVar);
+
+            // Rounds thread number (number of vertical layers/levels) to the next multiple of 32
+            int threads_per_block = nvi + 32 - nvi % 32;
+            dim3 blockDim(threads_per_block, 1, 1);
+            dim3 gridDim (point_num, 1, 1);
+            
+            // Shared memory array for parallelizing calculations on a column
+            size_t shmem = 11 * threads_per_block * sizeof(double);   
+
+            mixing_length_adj_parallel<<<gridDim, blockDim, shmem>>>(pressure_d,   // Pressure [Pa]
+                                                                    temperature_d, // Temperature [K] - layers
+                                                                    profx_Qheat_d,
+                                                                    pt_d,          // Pot. temperature [K]
+                                                                    Rho_d,         // Density [m^3/kg]
+                                                                    Cp_d,          // Specific heat capacity [J/kg/K]
+                                                                    Rd_d,          // Gas constant [J/kg/K]
+                                                                    sim.Gravit,    // Gravity [m/s^2]
+                                                                    sim.A,         // Radius [m]
+                                                                    Altitude_d,    // Altitudes of the layers [m]
+                                                                    Altitudeh_d,   // Altitudes of the interfaces [m]
+                                                                    Kzz_d,         // Eddy diffusion coefficient
+                                                                    sim.mlt_timestep,
+                                                                    timestep,
+                                                                    sim.soft_adjustment,
+                                                                    point_num, // Number of columns
+                                                                    nv,
+                                                                    sim.GravHeightVar);
+
             cudaDeviceSynchronize();
             cudaMemcpy(Kzz_h, Kzz_d, point_num * nv * sizeof(double), cudaMemcpyDeviceToHost);
             cuda_check_status_or_exit(__FILE__, __LINE__);

@@ -314,8 +314,7 @@ __device__ inline void bezier_altitude_interpolation(int     id,
 }
 
 
-__global__ void
-mixing_length_adj(double *Pressure_d,     // Pressure (cell centers) [Pa]
+__global__ void mixing_length_adj(double *Pressure_d,     // Pressure (cell centers) [Pa]
                   double *Temperature_d,  // Temperature (cell centers)[K]
                   double *Temperatureh_d, // Temperature at interfaces (cell edges) [K]
                   double *profx_Qheat_d,
@@ -339,7 +338,8 @@ mixing_length_adj(double *Pressure_d,     // Pressure (cell centers) [Pa]
                   bool    soft_adjust,
                   int     num,          // Number of columns
                   int     nv,           // Vertical levels
-                  bool    GravHeightVar) {
+                  bool    GravHeightVar)
+{
     //
     //  Description:
     //
@@ -626,6 +626,9 @@ mixing_length_adj(double *Pressure_d,     // Pressure (cell centers) [Pa]
                 profx_Qheat_d[id * nv + lev] += (Cp_d[id * nv + lev] - Rd_d[id * nv + lev])
                                                 / Rd_d[id * nv + lev]
                                                 * (Ptmp - Pressure_d[id * nv + lev]) / time_step;
+                if (id == 0) {
+                    printf("Correction Q_heat = %.3e | lev =  %d \n",  profx_Qheat_d[id * nv + lev], lev);
+                }
             }
         }
         // Hard adjust the pressure and the pot. temperature directly using the calculated temperature
@@ -639,6 +642,493 @@ mixing_length_adj(double *Pressure_d,     // Pressure (cell centers) [Pa]
                                       * pow(Pressure_d[id * nv + lev] / ps,
                                             -Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
             }
+        }
+    }
+}
+
+
+// ----------------------------------------------------------------------------------------------//
+// Experimental optimized MLT implementation 
+
+__device__ inline double compute_weno4_local_parallel(double        x,
+                                                      const double *xp,
+                                                      const double *fp,
+                                                      int           i,
+                                                      int           Ngrid,
+                                                      double        eps,
+                                                      double       *B2,
+                                                      double       *B3,
+                                                      int          *prevB)
+{
+    double y;
+    double xim, xi, xip, xipp, yim, yi, yip, yipp;
+    double q2, q3, gam2, gam3, al2, al3, om2, om3;
+
+    xi  = xp[i];
+    xip = xp[i + 1];
+    yi  = fp[i];
+    yip = fp[i + 1];
+
+    // --- ghost point fix
+    if (i == 0) {
+        xim  = 2.0 * xp[0] - xp[1];
+        yim  = fp[0]; // mirror value
+        xipp = xp[2];
+        yipp = fp[2];
+    }
+    else if (i == Ngrid - 3) { // new upper-edge test
+        xim  = xp[i - 1];
+        yim  = fp[i - 1];
+        xipp = 2.0 * xp[Ngrid - 1] - xp[Ngrid - 2];
+        yipp = fp[Ngrid - 1];
+    }
+    else {
+        xim  = xp[i - 1];
+        xipp = xp[i + 2];
+        yim  = fp[i - 1];
+        yipp = fp[i + 2];
+    }
+
+    // Compute q2 and q3 using the weno4_q function
+    weno4_q(x, xim, xi, xip, xipp, yim, yi, yip, yipp, &q2, &q3);
+
+    // Determine the interpolated value based on the position
+    if (i == 0) {
+        y = q3; // Use q3 at the lower boundary
+    }
+    else if (i == Ngrid - 3) {
+        y = q2; // Use q2 at the upper boundary
+    }
+    else {
+        // Recompute B2 and B3 only when i changes
+        if (i != *prevB) {
+            weno4_B(xim, xi, xip, xipp, yim, yi, yip, yipp, B2, B3);
+            *prevB = i;
+        }
+
+        // Compute the weights
+        gam2 = -(x - xipp) / (xipp - xim);
+        gam3 = (x - xim) / (xipp - xim);
+
+        al2 = gam2 / (eps + *B2);
+        al3 = gam3 / (eps + *B3);
+
+        om2 = al2 / (al2 + al3);
+        om3 = al3 / (al2 + al3);
+
+        // Compute the final interpolated value
+        y = om2 * q2 + om3 * q3;
+    }
+
+    return y;
+}
+
+
+__device__ inline void weno4_interface(const double *xs,
+                                       const double *xp,
+                                       const double *fp,
+                                       double       *result,
+                                       int           lev,
+                                       int           nv,
+                                       bool          use_extrapolate)
+{
+    // Altitudeh_d[lev]
+    double x = xs[lev];                 
+    int Ngrid = nv;
+    int i;
+
+    double eps, B2, B3;  
+    int    prevB;
+    
+    eps = 1e-6;
+    B2 = 0.0 , B3 = 0.0;
+    prevB = -1;
+
+    // Bottom edge
+    if (x < xp[0]) {
+        if (!use_extrapolate) {
+            result[lev] = fp[0];
+            return;
+        }
+        i = 0;
+    }
+    // Top edge
+    else if (x > xp[Ngrid-1]) {
+        if (!use_extrapolate) {
+            result[lev] = fp[Ngrid-1];
+            return;
+        }
+        i = Ngrid - 3;
+    }
+    // Normal cells in between
+    else {
+        i = binary_search(xp, x, Ngrid);
+    }                      
+
+    if (i == Ngrid - 1) {
+        i = Ngrid - 2;
+    }   
+    if (i >= Ngrid - 2){
+        i = Ngrid - 3;
+    } 
+
+    double val = compute_weno4_local_parallel(x, xp, fp, i, Ngrid, eps, &B2, &B3, &prevB);
+    result[lev] = val;
+}
+
+
+__global__ void mixing_length_adj_parallel(double *Pressure_d, 
+                                           double *Temperature_d, 
+                                           double *profx_Qheat_d,  
+                                           double *pt_d,           
+                                           double *Rho_d,          
+                                           double *Cp_d,           
+                                           double *Rd_d,           
+                                           double  Gravit,
+                                           double  A,
+                                           double *Altitude_d,    
+                                           double *Altitudeh_d,    
+                                           double *Kzz_d,       
+                                           double  mlt_timestep,
+                                           double  time_step,
+                                           bool    soft_adjust,
+                                           int     num,
+                                           int     nv,
+                                           bool    GravHeightVar)
+{
+    const int id  = blockIdx.x;
+    const int lev = threadIdx.x;       // vertical level handled by this thread
+    const int threads_per_block = blockDim.x;
+
+    // Thread safety
+    if (id >= num){
+        return;
+    } 
+
+    // Interpolation variables
+    double psm;
+    
+    // Physics variables
+    double  gamma_ad;               // Adiabatic lapse rate [K/m]
+    double  w_mlt, w_mlt_rcb, w_ov; // Convective velocity [m/s]
+    double  scale_height_local;     // Scale height for the local conditions
+    double  L;                      // Characteristic mixing length [m]
+    double  dTdz;                   // Vertical temperature gradient [K/m] (Lapse rate)
+    double  dFdz;                   // Vertical gradient of the thermal convective flux [W/m^3]
+    double  dTdt_mlt;               // Temperature tendency due to MLT [K/s]
+
+
+    // Constants and parameters
+    const double alpha   = 1.0; // MLT scale parameter (Lee+23)
+    const double beta    = 2.2; 
+    const double Kzz_min = 1e1;
+    const double Kzz_max = 1e8;
+
+
+    // Shared memory arrays
+    extern __shared__ double sh[];
+    double* temperature_sh  = &sh[ 0 * threads_per_block]; 
+    double* temperatureh_sh = &sh[ 1 * threads_per_block];
+    double* pressure_sh     = &sh[ 2 * threads_per_block]; 
+    double* rho_sh          = &sh[ 3 * threads_per_block];
+    double* Cp_sh           = &sh[ 4 * threads_per_block];
+    double* Rd_sh           = &sh[ 5 * threads_per_block];
+    double* f_conv_sh       = &sh[ 6 * threads_per_block]; 
+    double* f_convh_sh      = &sh[ 7 * threads_per_block]; 
+    double* lapse_rate_sh   = &sh[ 8 * threads_per_block]; 
+    double* dz_sh           = &sh[ 9 * threads_per_block]; 
+    double* kzz_sh          = &sh[ 10 * threads_per_block]; 
+    double* kzzov_sh        = &sh[ 11 * threads_per_block]; 
+
+    // extra scalars
+    __shared__ double ps_sh;
+    __shared__ int    convective_any;
+
+
+    // Load column into shared arrays
+    if (lev < nv) {
+        temperature_sh[lev]  = Temperature_d[id * nv + lev];
+        temperatureh_sh[lev] = 0.0;
+        pressure_sh[lev]     = Pressure_d[id * nv + lev];
+        rho_sh[lev]          = Rho_d[id * nv + lev];
+        Cp_sh[lev]           = Cp_d[id * nv + lev];
+        Rd_sh[lev]           = Rd_d[id * nv + lev];
+        f_conv_sh[lev]       = 0.0;
+        f_convh_sh[lev]      = 0.0;
+        lapse_rate_sh[lev]   = 0.0;
+        dz_sh[lev]           = Altitudeh_d[lev+1] - Altitudeh_d[lev];
+        kzz_sh[lev]          = 0.0;
+        kzzov_sh[lev]        = 0.0;
+    }
+    __syncthreads();
+
+    // Initialize interface array edges
+    if (lev == nv) {
+        temperatureh_sh[lev] = 0.0;
+        f_convh_sh[lev]      = 0.0;
+    }
+    
+    // Calculate the bottom interface pressure through an extrapolation
+    if (lev == 0){
+        if (GravHeightVar) {
+            psm = pressure_sh[1] - rho_sh[0] * Gravit * pow(A / (A + Altitude_d[0]), 2) * (-Altitude_d[0] - Altitude_d[1]);
+        }
+        else {
+            psm = pressure_sh[1] - rho_sh[0] * Gravit * (-Altitude_d[0] - Altitude_d[1]);
+        }
+
+        ps_sh = 0.5 * (pressure_sh[0] + psm);
+    }
+
+    __syncthreads();
+
+    const double ps = ps_sh;
+
+    // Initialize iteration properties
+    double t_now              = 0.0;
+    double dt                 = mlt_timestep;
+    int  iter                 = 0;
+    bool convective_ever      = false;
+    bool implicit_extrapolate = true;
+
+    // Main sub-timestepping loop
+    while ((t_now < time_step) && iter < 10000) {
+        
+        // Adjust time step if it overshoots
+        if ((t_now + dt >= time_step)) {
+            dt = time_step - t_now;
+        }
+
+        __syncthreads();
+
+        // WENO4 interpolation
+        if (lev <= nv) {
+            weno4_interface(Altitudeh_d, Altitude_d, temperature_sh, temperatureh_sh, lev, nv, true);
+        }
+           
+        __syncthreads();
+
+        if (!implicit_extrapolate && lev == 0) {
+            // Linear extrapolation at the lower boundary
+            temperatureh_sh[0] = temperature_sh[0] + (Altitudeh_d[0] - Altitude_d[0])
+                                * (temperatureh_sh[1] - temperature_sh[0])
+                                / (Altitudeh_d[1] - Altitude_d[0]);
+
+            // Linear extrapolation at the upper boundary
+            temperatureh_sh[nv] = temperature_sh[nv - 1] + (Altitudeh_d[nv] - Altitude_d[nv - 1])
+                        * (temperatureh_sh[nv - 1] - temperature_sh[nv - 1])
+                        / (Altitudeh_d[nv - 1] - Altitude_d[nv - 1]);
+        }
+
+        __syncthreads();
+        
+        // Calculate lapse rate between layers
+        if (lev < nv){
+            dTdz = (temperatureh_sh[lev + 1] - temperatureh_sh[lev]) / dz_sh[lev];
+            lapse_rate_sh[lev] = -1.0 * dTdz;
+        }
+
+        __syncthreads();
+
+        // Set convection check
+        if (lev == 0){
+            convective_any = 0;
+        } 
+
+        __syncthreads();
+
+        // Go over all of the levels and check for convective instability
+        if (lev < nv){
+            
+            // Compute the pressure scale height
+            scale_height_local = (Rd_sh[lev] * temperature_sh[lev]) / Gravit;
+            
+            // Mixing length
+            L = alpha * scale_height_local;
+
+            // Calculate adiabatic lapse rate
+            gamma_ad = Gravit / Cp_sh[lev];
+
+            // Check for convective instabilities
+            if (lapse_rate_sh[lev] > gamma_ad) {
+                atomicOr(&convective_any, 1);
+
+                // Calculate the characteristic vertical velocity
+                w_mlt = L * sqrt(Gravit / temperature_sh[lev] * (lapse_rate_sh[lev] - gamma_ad));
+
+                // Calculate the convective heat flux (Joyce & Tayar 2023)
+                f_conv_sh[lev] = 0.5 * rho_sh[lev] * Cp_sh[lev] * w_mlt * L * (lapse_rate_sh[lev] - gamma_ad);
+            }
+            else {
+                
+                w_mlt = 0.0;
+                f_conv_sh[lev] = 0.0;
+            }
+
+            // Update Kzz running total
+            kzz_sh[lev] += w_mlt * L;
+        }
+
+        __syncthreads();
+        
+        // Check if convective instability got triggered
+        if (convective_any == 0) {
+            ++iter;
+            break; // same as scalar: exit sub-step loop early, no convective_ever
+        }
+
+        // If code reaches this far convection occured
+        convective_ever = true;
+
+        // Interpolate the vertical convective thermal flux
+        if (lev <= nv) {
+            weno4_interface(Altitudeh_d, Altitude_d, f_conv_sh, f_convh_sh, lev, nv, true);
+        }
+
+        __syncthreads();
+
+        if (!implicit_extrapolate && lev == 0) {
+            // Linear interapolation to the lower boundary
+            // f_convh_sh[0] = f_conv_sh[0] + (Altitudeh_d[0] - Altitude_d[0])
+            //              * (f_convh_sh[1] - f_conv_sh[0]) / (Altitudeh_d[1] - Altitude_d[0]);
+
+            // Linear interapolation to the upper boundary
+            // f_convh_sh[nv] = f_conv_sh[nv - 1] + (Altitudeh_d[nv] - Altitude_d[nv - 1])
+            //              * (f_convh_sh[nv - 1] - f_conv_sh[nv - 1]) / (Altitudeh_d[nv-1] - Altitude_d[nv-1]);
+
+            // Set the edges to zero
+            f_convh_sh[0]  = 0.0;
+            f_convh_sh[nv] = 0.0;
+        }
+
+        __syncthreads();
+
+        if (lev < nv){
+            
+            // Calculate the flux derivative (dF_conv/dz)
+            dFdz = (f_convh_sh[lev + 1] - f_convh_sh[lev]) / dz_sh[lev];
+
+            // Calculate the temperature gradient
+            dTdt_mlt = -1.0 / (Cp_sh[lev] * rho_sh[lev]) * dFdz;
+
+            // Update the temperature in a sub-timestep approach using a smaller timestep than the dynamical timestep
+            temperature_sh[lev] += dTdt_mlt * dt;
+
+            // Update the pressure with the updated temperature
+            pressure_sh[lev] = temperature_sh[lev] * Rd_sh[lev] * rho_sh[lev];
+        }
+
+        __syncthreads();
+        
+        // Update the iteration counter & time step
+        t_now += dt;
+        iter++;
+    }
+
+    __syncthreads();
+
+    // If no correction happened set K_zz to minimum value
+    __shared__ int done;
+    if (!convective_ever && lev < nv) {
+        kzz_sh[lev] = Kzz_min;
+        if (lev == 0) {
+            done = (!convective_ever);
+        } 
+    }
+
+    __syncthreads();
+
+    // Early return all threads if no convection happened
+    if (done) {
+        return;
+    }
+    __syncthreads(); 
+
+    // Find the final averaged K_zz value
+    if (lev < nv){
+        kzz_sh[lev] = kzz_sh[lev] / (double)iter;
+    }
+
+    __syncthreads();
+
+    // Find the RCB
+    __shared__ int krcb_sh;
+    if (lev == 0) {
+        // Use one thread to get last lev where f_conv_sh > 0
+        int krcb = 0;
+        // Using a difference index so lev won't cause issues in access
+        for (int k = 0; k < nv; ++k) {
+            // last positive
+            if (f_conv_sh[k] > 0.0) {
+                krcb = k; 
+            } 
+        } 
+        krcb_sh = krcb;
+    }
+    
+    __syncthreads();
+    
+    // Broadcast 
+    // Coming to think of it, this the shared variable is already broadcast?
+    const int krcb = krcb_sh;
+
+    // Mixing velocity at the RCB
+    __shared__ double w_mlt_rcb_sh;
+    if (lev == 0) {
+        w_mlt_rcb = 1e-30;
+        if (krcb < nv) {
+            scale_height_local = (Rd_sh[krcb] * temperature_sh[krcb]) / Gravit;
+            L = alpha * scale_height_local;
+            gamma_ad = Gravit / Cp_sh[krcb];
+            w_mlt_rcb = L * sqrt(fmax(0.0, Gravit / temperature_sh[krcb] * (lapse_rate_sh[krcb] - gamma_ad)));
+        }
+        w_mlt_rcb_sh = w_mlt_rcb;
+    }
+
+    __syncthreads();
+
+    // Calculate the overshoot component
+    if (lev < nv) {
+        double kov = 0.0;
+        if (lev > krcb) {
+            w_mlt_rcb = w_mlt_rcb_sh;
+            w_ov  = exp( log(w_mlt_rcb) - beta * fmax(0.0, log(pressure_sh[krcb] / pressure_sh[lev])) );
+            scale_height_local = (Rd_sh[lev] * temperature_sh[lev]) / Gravit;
+            L = alpha * scale_height_local;
+            kov = w_ov * L;
+            if (kov < Kzz_min) {
+                kov = 0.0;
+            }
+        }
+        kzzov_sh[lev] = kov;
+    }
+    __syncthreads();
+
+    // Combine Kzz + overshoot, clamp, update global array
+    if (lev < nv) {
+        // Make sure Kzz is above minimum value
+        kzz_sh[lev] = fmax(kzz_sh[lev] + kzzov_sh[lev], Kzz_min);
+
+        // Make sure Kzz is smaller than the maximum value
+        Kzz_d[id * nv + lev] = fmin(kzz_sh[lev], Kzz_max);
+    }
+    
+    __syncthreads();
+
+    // Update global arrays to be passed to the dynamical core
+    if (lev < nv) {
+        // Soft adjust the results by only modifying the Qheat term using the calculated temperature
+        if (soft_adjust) {
+            double Ptmp, Pold;
+            Ptmp = temperature_sh[lev] * Rd_sh[lev] * rho_sh[lev];
+            Pold = Pressure_d[id * nv + lev];
+            profx_Qheat_d[id * nv + lev] += (Cp_sh[lev] - Rd_sh[lev]) / Rd_sh[lev] * (Ptmp - Pold) / time_step;
+        
+        // Hard adjust the pressure and the pot. temperature directly using the calculated temperature
+        } else {
+            Temperature_d[id*nv + lev] = temperature_sh[lev];
+            Pressure_d[id*nv + lev]    = temperature_sh[lev] * Rd_sh[lev] * rho_sh[lev];
+            pt_d[id*nv + lev] = temperature_sh[lev] * pow(Pressure_d[id*nv + lev] / ps, -Rd_sh[lev]/Cp_sh[lev]);
         }
     }
 }
