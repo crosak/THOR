@@ -1698,7 +1698,7 @@ __global__ void cloud_number_density(double *Rho_d,          // Density [kg/m3]
               / mu; // Technically it's not even necessary to do this because we multiply it back...
         
         // Read-in the cloud condensate MMRs
-        q_c = tracer_cloud_d[idx_c] / Rho_d[id * nv + lev] / eps;
+        q_c = tracer_cloud_d[idx_c] / Rho_d[id * nv + lev];
         
         // Calculate total number density
         n_tot_d[idx_sp] = ((3.0 * q_c * eps * Rho_d[id * nv + lev])
