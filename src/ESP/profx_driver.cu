@@ -322,7 +322,7 @@ __host__ void ESP::ProfX(const SimulationSetup& sim,
             dim3 gridDim (point_num, 1, 1);
             
             // Shared memory array for parallelizing calculations on a column
-            size_t shmem = 12 * threads_per_block * sizeof(double);   
+            size_t shmem = 13 * threads_per_block * sizeof(double);   
 
             mixing_length_adj_parallel<<<gridDim, blockDim, shmem>>>(pressure_d,   // Pressure [Pa]
                                                                     temperature_d, // Temperature [K] - layers

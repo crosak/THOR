@@ -830,17 +830,18 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
     double* rho_sh          = &sh[ 3 * threads_per_block];
     double* Cp_sh           = &sh[ 4 * threads_per_block];
     double* Rd_sh           = &sh[ 5 * threads_per_block];
-    double* f_conv_sh       = &sh[ 6 * threads_per_block]; 
-    double* f_convh_sh      = &sh[ 7 * threads_per_block]; 
-    double* lapse_rate_sh   = &sh[ 8 * threads_per_block]; 
-    double* dz_sh           = &sh[ 9 * threads_per_block]; 
-    double* kzz_sh          = &sh[ 10 * threads_per_block]; 
-    double* kzzov_sh        = &sh[ 11 * threads_per_block]; 
+    double* altitude_sh     = &sh[ 6 * threads_per_block]; 
+    double* altitudeh_sh    = &sh[ 7 * threads_per_block];
+    double* f_conv_sh       = &sh[ 8 * threads_per_block]; 
+    double* f_convh_sh      = &sh[ 9 * threads_per_block]; 
+    double* lapse_rate_sh   = &sh[ 10 * threads_per_block]; 
+    double* kzz_sh          = &sh[ 11 * threads_per_block]; 
+    double* kzzov_sh        = &sh[ 12 * threads_per_block]; 
 
     // extra scalars
     __shared__ double ps_sh;
-    __shared__ int    convective_any;
-
+    // __shared__ volatile int convective_any;     // set each sub-step
+    // __shared__ volatile int convective_ever_sh; // latched once any sub-step convects
 
     // Load column into shared arrays
     if (lev < nv) {
@@ -850,10 +851,11 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
         rho_sh[lev]          = Rho_d[id * nv + lev];
         Cp_sh[lev]           = Cp_d[id * nv + lev];
         Rd_sh[lev]           = Rd_d[id * nv + lev];
+        altitude_sh[lev]     = Altitude_d[lev];
+        altitudeh_sh[lev]    = Altitudeh_d[lev];
         f_conv_sh[lev]       = 0.0;
         f_convh_sh[lev]      = 0.0;
         lapse_rate_sh[lev]   = 0.0;
-        dz_sh[lev]           = Altitudeh_d[lev+1] - Altitudeh_d[lev];
         kzz_sh[lev]          = 0.0;
         kzzov_sh[lev]        = 0.0;
     }
@@ -862,16 +864,17 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
     // Initialize interface array edges
     if (lev == nv) {
         temperatureh_sh[lev] = 0.0;
+        altitudeh_sh[lev]    = Altitudeh_d[lev];
         f_convh_sh[lev]      = 0.0;
     }
     
     // Calculate the bottom interface pressure through an extrapolation
     if (lev == 0){
         if (GravHeightVar) {
-            psm = pressure_sh[1] - rho_sh[0] * Gravit * pow(A / (A + Altitude_d[0]), 2) * (-Altitude_d[0] - Altitude_d[1]);
+            psm = pressure_sh[1] - rho_sh[0] * Gravit * pow(A / (A + altitude_sh[0]), 2) * (-altitude_sh[0] - altitude_sh[1]);
         }
         else {
-            psm = pressure_sh[1] - rho_sh[0] * Gravit * (-Altitude_d[0] - Altitude_d[1]);
+            psm = pressure_sh[1] - rho_sh[0] * Gravit * (-altitude_sh[0] - altitude_sh[1]);
         }
 
         ps_sh = 0.5 * (pressure_sh[0] + psm);
@@ -881,11 +884,15 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
 
     const double ps = ps_sh;
 
+    // if (lev == 0) {
+    //     convective_ever_sh = 0; // nothing yet
+    // }
+    // __syncthreads();
+
     // Initialize iteration properties
     double t_now              = 0.0;
     double dt                 = mlt_timestep;
     int  iter                 = 0;
-    bool convective_ever      = false;
     bool implicit_extrapolate = true;
 
     // Main sub-timestepping loop
@@ -900,37 +907,37 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
 
         // WENO4 interpolation
         if (lev <= nv) {
-            weno4_interface(Altitudeh_d, Altitude_d, temperature_sh, temperatureh_sh, lev, nv, true);
+            weno4_interface(altitudeh_sh, altitude_sh, temperature_sh, temperatureh_sh, lev, nv, implicit_extrapolate);
         }
            
         __syncthreads();
 
         if (!implicit_extrapolate && lev == 0) {
             // Linear extrapolation at the lower boundary
-            temperatureh_sh[0] = temperature_sh[0] + (Altitudeh_d[0] - Altitude_d[0])
+            temperatureh_sh[0] = temperature_sh[0] + (altitudeh_sh[0] - altitude_sh[0])
                                 * (temperatureh_sh[1] - temperature_sh[0])
-                                / (Altitudeh_d[1] - Altitude_d[0]);
+                                / (altitudeh_sh[1] - altitude_sh[0]);
 
             // Linear extrapolation at the upper boundary
-            temperatureh_sh[nv] = temperature_sh[nv - 1] + (Altitudeh_d[nv] - Altitude_d[nv - 1])
+            temperatureh_sh[nv] = temperature_sh[nv - 1] + (altitudeh_sh[nv] - altitude_sh[nv - 1])
                         * (temperatureh_sh[nv - 1] - temperature_sh[nv - 1])
-                        / (Altitudeh_d[nv - 1] - Altitude_d[nv - 1]);
+                        / (altitudeh_sh[nv - 1] - altitude_sh[nv - 1]);
         }
 
         __syncthreads();
         
         // Calculate lapse rate between layers
         if (lev < nv){
-            dTdz = (temperatureh_sh[lev + 1] - temperatureh_sh[lev]) / dz_sh[lev];
+            dTdz = (temperatureh_sh[lev + 1] - temperatureh_sh[lev]) / (altitudeh_sh[lev+1] - altitudeh_sh[lev]);
             lapse_rate_sh[lev] = -1.0 * dTdz;
         }
 
         __syncthreads();
 
         // Set convection check
-        if (lev == 0){
-            convective_any = 0;
-        } 
+        // if (lev == 0){
+        //     convective_any = 0;
+        // } 
 
         __syncthreads();
 
@@ -948,7 +955,7 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
 
             // Check for convective instabilities
             if (lapse_rate_sh[lev] > gamma_ad) {
-                atomicOr(&convective_any, 1);
+                // atomicOr(&convective_any, 1);
 
                 // Calculate the characteristic vertical velocity
                 w_mlt = L * sqrt(Gravit / temperature_sh[lev] * (lapse_rate_sh[lev] - gamma_ad));
@@ -968,30 +975,32 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
 
         __syncthreads();
         
-        // Check if convective instability got triggered
-        if (convective_any == 0) {
-            ++iter;
-            break; // same as scalar: exit sub-step loop early, no convective_ever
-        }
+        // if (lev == 0 && convective_any) {
+        //     convective_ever_sh = 1;   // once set, stays set
+        // }
+        // __syncthreads();
 
-        // If code reaches this far convection occured
-        convective_ever = true;
+        // Check if convective instability got triggered
+        // if (convective_any == 0) {
+        //     ++iter;
+        //     break; // same as scalar: exit sub-step loop early, no convective_ever
+        // }
 
         // Interpolate the vertical convective thermal flux
         if (lev <= nv) {
-            weno4_interface(Altitudeh_d, Altitude_d, f_conv_sh, f_convh_sh, lev, nv, true);
+            weno4_interface(altitudeh_sh, altitude_sh, f_conv_sh, f_convh_sh, lev, nv, implicit_extrapolate);
         }
 
         __syncthreads();
 
         if (!implicit_extrapolate && lev == 0) {
             // Linear interapolation to the lower boundary
-            // f_convh_sh[0] = f_conv_sh[0] + (Altitudeh_d[0] - Altitude_d[0])
-            //              * (f_convh_sh[1] - f_conv_sh[0]) / (Altitudeh_d[1] - Altitude_d[0]);
+            // f_convh_sh[0] = f_conv_sh[0] + (altitudeh_sh[0] - altitude_sh[0])
+            //              * (f_convh_sh[1] - f_conv_sh[0]) / (altitudeh_sh[1] - altitude_sh[0]);
 
             // Linear interapolation to the upper boundary
-            // f_convh_sh[nv] = f_conv_sh[nv - 1] + (Altitudeh_d[nv] - Altitude_d[nv - 1])
-            //              * (f_convh_sh[nv - 1] - f_conv_sh[nv - 1]) / (Altitudeh_d[nv-1] - Altitude_d[nv-1]);
+            // f_convh_sh[nv] = f_conv_sh[nv - 1] + (altitudeh_sh[nv] - altitude_sh[nv - 1])
+            //              * (f_convh_sh[nv - 1] - f_conv_sh[nv - 1]) / (altitudeh_sh[nv-1] - Altitude_sh[nv-1]);
 
             // Set the edges to zero
             f_convh_sh[0]  = 0.0;
@@ -1003,7 +1012,7 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
         if (lev < nv){
             
             // Calculate the flux derivative (dF_conv/dz)
-            dFdz = (f_convh_sh[lev + 1] - f_convh_sh[lev]) / dz_sh[lev];
+            dFdz = (f_convh_sh[lev + 1] - f_convh_sh[lev]) / (altitudeh_sh[lev+1] - altitudeh_sh[lev]);
 
             // Calculate the temperature gradient
             dTdt_mlt = -1.0 / (Cp_sh[lev] * rho_sh[lev]) * dFdz;
@@ -1025,21 +1034,17 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
     __syncthreads();
 
     // If no correction happened set K_zz to minimum value
-    __shared__ int done;
-    if (!convective_ever && lev < nv) {
-        kzz_sh[lev] = Kzz_min;
-        if (lev == 0) {
-            done = (!convective_ever);
-        } 
-    }
+    // if (convective_ever_sh == 0) {
+    //     if (lev < nv) {
+    //         // write out immediately
+    //         Kzz_d[id * nv + lev] = Kzz_min;
+    //     }
+    //     __syncthreads();
+    //     // Early exit: whole block returns
+    //     return;
+    // }
 
-    __syncthreads();
-
-    // Early return all threads if no convection happened
-    if (done) {
-        return;
-    }
-    __syncthreads(); 
+    // __syncthreads(); 
 
     // Find the final averaged K_zz value
     if (lev < nv){
