@@ -119,7 +119,6 @@ __device__ void LPMN_NORM(int mmax,
 
 // Kernel function for thermal perturbation calculation
 __global__ void thermal_perturb(double *Pressure_d,    // Pressure [Pa]
-                                double *Pressureh_d,   // Mid-point pressure [Pa] or is it interface pressure?
                                 double *Temperature_d, // Temperature [K]
                                 double *profx_Qheat_d,
                                 double *pt_d,          // Potential temperature [K]
@@ -167,8 +166,6 @@ __global__ void thermal_perturb(double *Pressure_d,    // Pressure [Pa]
 
     // Interpolation variables
     double ps, psm;
-    double pp, ptop;
-    double xi, xip, xim, a, b;
     
     // Calculate decay factor
     r = 1.0 - time_step / t_storm;
@@ -178,52 +175,24 @@ __global__ void thermal_perturb(double *Pressure_d,    // Pressure [Pa]
         double lat_d   = lonlat_d[id * 2 + 1];
         double lon_d   = lonlat_d[id * 2];
 
-        // Calculate pressure at the interfaces
-        for (int lev = 0; lev <= nv; lev++) {
-            if (lev == 0) {
-                // Extrapolate to lower boundary
-                if (GravHeightVar) {
-                    psm = Pressure_d[id * nv + 1]
-                          - Rho_d[id * nv + 0] * Gravit * pow(A / (A + Altitude_d[0]), 2)
-                                * (-Altitude_d[0] - Altitude_d[1]);
-                }
-                else {
-                    psm = Pressure_d[id * nv + 1]
-                          - Rho_d[id * nv + 0] * Gravit * (-Altitude_d[0] - Altitude_d[1]);
-                }
-                ps                             = 0.5 * (Pressure_d[id * nv + 0] + psm);
-                Pressureh_d[id * (nv + 1) + 0] = ps;
-            }
-            else if (lev == nv) {
-                // Extrapolate to top boundary
-                if (GravHeightVar) {
-                    pp =
-                        Pressure_d[id * nv + nv - 2]
-                        - Rho_d[id * nv + nv - 1] * Gravit
-                              * pow(A / (A + Altitude_d[nv - 1]), 2)
-                              * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
-                }
-                else {
-                    pp =
-                        Pressure_d[id * nv + nv - 2]
-                        - Rho_d[id * nv + nv - 1] * Gravit
-                              * (2 * Altitudeh_d[nv] - Altitude_d[nv - 1] - Altitude_d[nv - 2]);
-                }
-                if (pp < 0)
-                    pp = 0; //prevents pressure from going negative
-                ptop                             = 0.5 * (Pressure_d[id * nv + nv - 1] + pp);
-                Pressureh_d[id * (nv + 1) + lev] = ptop;
-            }
-            else {
-                // Interpolation between layers
-                xi  = Altitudeh_d[lev];
-                xim = Altitude_d[lev - 1];
-                xip = Altitude_d[lev];
-                a   = (xi - xip) / (xim - xip);
-                b   = (xi - xim) / (xip - xim);
-                Pressureh_d[id * (nv + 1) + lev] =
-                    Pressure_d[id * nv + lev - 1] * a + Pressure_d[id * nv + lev] * b;
-            }
+        // Calculate the bottom interface pressure through an extrapolation
+        if (GravHeightVar) {
+            psm = Pressure_d[id * nv + 1]
+                  - Rho_d[id * nv + 0] * Gravit * pow(A / (A + Altitude_d[0]), 2)
+                        * (-Altitude_d[0] - Altitude_d[1]);
+        }
+        else {
+            psm = Pressure_d[id * nv + 1]
+                  - Rho_d[id * nv + 0] * Gravit * (-Altitude_d[0] - Altitude_d[1]);
+        }
+
+        ps = 0.5 * (Pressure_d[id * nv + 0] + psm);
+
+        // Compute Potential Temperature
+        for (int lev = 0; lev < nv; lev++) {
+            pt_d[id * nv + lev] = Temperature_d[id * nv + lev]
+                                    * pow(ps / Pressure_d[id * nv + lev],
+                                        Rd_d[id * nv + lev] / Cp_d[id * nv + lev]);
         }
 
         // Perform initialization and burn-in on the first call 
@@ -286,8 +255,8 @@ __global__ void thermal_perturb(double *Pressure_d,    // Pressure [Pa]
 
          // Calculate thermal perturbation
         for (int lev = 0; lev < nv; lev++) {
-            double pressure = Pressureh_d[id * nv + lev];
-            double thet_over_t = 1.0;  // Placeholder, should use a relevant formula
+            double pressure = Pressure_d[id * nv + lev];
+            double thet_over_t = pt_d[id * nv + lev] / Temperature_d[id * nv + lev]; //1.0;
 
             // Compute the vertical forcing profile based on pressure levels
             if (pressure <= p_rcb) {
@@ -297,7 +266,8 @@ __global__ void thermal_perturb(double *Pressure_d,    // Pressure [Pa]
             }
 
             // Apply the thermal perturbation conditionally
-            if (pressure <= p_rcb * 7.389 || pressure >= p_rcb / 7.389) {
+            // 7.389 is approximately e^2
+            if (pressure <= p_rcb * 7.389 && pressure >= p_rcb / 7.389) {
                 thermpert_d[id * nv + lev] = thet_over_t * forc_vert_profile * bforce_d[id * nv + lev];
                 // if (id % 100 == 0 && lev == 0) { // Print only for every 100th thread and the first level
                 //     printf("Perturbations at point (%.2f, %.2f): %.2e\n", lat_d, lon_d, thermpert_d[id * nv + lev]);
