@@ -1053,57 +1053,68 @@ __global__ void mixing_length_adj_parallel(double *Pressure_d,
 
     __syncthreads();
 
-    // Find the RCB
-    __shared__ int krcb_sh;
-    if (lev == 0) {
-        // Use one thread to get last lev where f_conv_sh > 0
-        int krcb = 0;
-        // Using a difference index so lev won't cause issues in access
-        for (int k = 0; k < nv; ++k) {
-            // last positive
-            if (f_conv_sh[k] > 0.0) {
-                krcb = k; 
-            } 
-        } 
-        krcb_sh = krcb;
-    }
-    
-    __syncthreads();
-    
-    // Broadcast 
-    // Coming to think of it, this the shared variable is already broadcast?
-    const int krcb = krcb_sh;
-
-    // Mixing velocity at the RCB
+    __shared__ int    krcb_sh;
     __shared__ double w_mlt_rcb_sh;
+
     if (lev == 0) {
-        w_mlt_rcb = 1e-30;
-        if (krcb < nv) {
-            scale_height_local = (Rd_sh[krcb] * temperature_sh[krcb]) / Gravit;
-            L = alpha * scale_height_local;
-            gamma_ad = Gravit / Cp_sh[krcb];
-            w_mlt_rcb = L * sqrt(fmax(0.0, Gravit / temperature_sh[krcb] * (lapse_rate_sh[krcb] - gamma_ad)));
-        }
-        w_mlt_rcb_sh = w_mlt_rcb;
-    }
+        // Walk upward
+        int k = 0;
+        while (k < nv) {
 
-    __syncthreads();
-
-    // Calculate the overshoot component
-    if (lev < nv) {
-        double kov = 0.0;
-        if (lev > krcb) {
-            w_mlt_rcb = w_mlt_rcb_sh;
-            w_ov  = exp( log(w_mlt_rcb) - beta * fmax(0.0, log(pressure_sh[krcb] / pressure_sh[lev])) );
-            scale_height_local = (Rd_sh[lev] * temperature_sh[lev]) / Gravit;
-            L = alpha * scale_height_local;
-            kov = w_ov * L;
-            if (kov < Kzz_min) {
-                kov = 0.0;
+            // Skip stable layers
+            while (k < nv && f_conv_sh[k] <= 0.0) {
+                ++k; 
             }
+            // It should be impossible to hit this?
+            if (k >= nv) {
+                break;
+            }
+
+            // Inside a convective block
+            while (k < nv && f_conv_sh[k] > 0.0) {
+                ++k;
+            }
+
+            // Last convective level = current RCB
+            krcb_sh = k - 1;
+
+            // Mixing velocity at this RCB
+            w_mlt_rcb = 1e-30;
+            if (krcb_sh < nv) {
+                scale_height_local = (Rd_sh[krcb_sh] * temperature_sh[krcb_sh]) / Gravit;
+                L        = alpha * scale_height_local;
+                gamma_ad = Gravit / Cp_sh[krcb_sh];
+                w_mlt_rcb = L * sqrt(fmax(0.0,
+                                Gravit / temperature_sh[krcb_sh] *
+                            (lapse_rate_sh[krcb_sh] - gamma_ad)));
+            }
+            w_mlt_rcb_sh = w_mlt_rcb;
+
+            // Overshoot above this RCB until next convective block or top
+            
+            while (k < nv && f_conv_sh[k] <= 0.0) {
+                double kov = 0.0;
+                w_ov = exp( log(w_mlt_rcb_sh) -
+                            beta * fmax(0.0,
+                                log(pressure_sh[krcb_sh] /
+                                    pressure_sh[k])) );
+
+                scale_height_local = (Rd_sh[k] * temperature_sh[k]) / Gravit;
+                L   = alpha * scale_height_local;
+                kov = w_ov * L;
+
+                if (kov < Kzz_min) { kov = 0.0; }
+
+                kzzov_sh[k] = kov;
+                // advance upward
+                ++k;                              
+            }
+
+            // Loop continues from the level that ended the overshoot loop
+            // (either next convective layer or nv)
         }
-        kzzov_sh[lev] = kov;
     }
+
     __syncthreads();
 
     // Combine Kzz + overshoot, clamp, update global array
